@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: agentchat-postgres
+    environment:
+      POSTGRES_USER: agentchat
+      POSTGRES_PASSWORD: agentchat_dev
+      POSTGRES_DB: agentchat
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - agentchat-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentchat"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  agentchat-postgres-data:
+    name: agentchat-postgres-data
