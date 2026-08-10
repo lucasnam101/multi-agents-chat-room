@@ -3,14 +3,11 @@ import type { ModelInfo } from "../lib/tauriApi";
 import { api } from "../lib/tauriApi";
 import { Modal } from "./Modal";
 import { useTheme } from "../lib/useTheme";
+import { useLang, type Lang } from "../lib/i18n";
 import { IconMoon, IconSun } from "./icons";
 
 const BUDGET_PRESETS = [100_000, 200_000, 300_000, 500_000, 1_000_000];
-const FONT_SIZE_OPTIONS: { value: "sm" | "base" | "lg"; label: string }[] = [
-  { value: "sm", label: "Nhỏ" },
-  { value: "base", label: "Vừa" },
-  { value: "lg", label: "Lớn" },
-];
+const FONT_SIZE_VALUES: ("sm" | "base" | "lg")[] = ["sm", "base", "lg"];
 
 export function formatTokens(n: number) {
   return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
@@ -44,6 +41,7 @@ export function ModelSelect({
   value: string | null;
   onChange: (model: string | null) => void;
 }) {
+  const { t } = useLang();
   const [models, setModels] = useState<ModelInfo[] | null>(null);
   const [error, setError] = useState(false);
 
@@ -65,15 +63,15 @@ export function ModelSelect({
   }, [agentKind]);
 
   if (error) {
-    return <div className="text-xs text-red-500">Không lấy được danh sách model (CLI chưa đăng nhập?)</div>;
+    return <div className="text-xs text-red-500">{t("model.error")}</div>;
   }
   if (!models) {
-    return <div className="text-xs text-neutral-400">Đang tải danh sách model…</div>;
+    return <div className="text-xs text-neutral-400">{t("model.loading")}</div>;
   }
 
   return (
     <select className={selectClass} value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
-      <option value="">(mặc định của adapter)</option>
+      <option value="">{t("model.adapterDefault")}</option>
       {models.map((m) => (
         <option key={m.model_id} value={m.model_id}>
           {m.name ?? m.model_id}
@@ -104,8 +102,9 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function StatusPill({ ok }: { ok: boolean | null }) {
+  const { t } = useLang();
   if (ok === null) {
-    return <span className="text-xs text-neutral-400">đang kiểm tra…</span>;
+    return <span className="text-xs text-neutral-400">{t("status.checking")}</span>;
   }
   return (
     <span
@@ -114,15 +113,10 @@ function StatusPill({ ok }: { ok: boolean | null }) {
       }`}
     >
       <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-emerald-500" : "bg-red-400"}`} />
-      {ok ? "đã đăng nhập" : "chưa đăng nhập"}
+      {ok ? t("status.loggedIn") : t("status.notLoggedIn")}
     </span>
   );
 }
-
-const TABS = [
-  { id: "general" as const, label: "Chung" },
-  { id: "models" as const, label: "Model" },
-];
 
 interface SettingsPanelProps {
   onClose: () => void;
@@ -130,8 +124,14 @@ interface SettingsPanelProps {
 }
 
 export function SettingsPanel({ onClose, onFontSizeChange }: SettingsPanelProps) {
+  const { t, lang, setLang } = useLang();
   const [tab, setTab] = useState<"general" | "models">("general");
   const { theme, toggle: toggleTheme } = useTheme();
+
+  const TABS: { id: "general" | "models"; label: string }[] = [
+    { id: "general", label: t("settings.tabs.general") },
+    { id: "models", label: t("settings.tabs.models") },
+  ];
 
   const [orchestratorKind, setOrchestratorKind] = useState<"claude" | "codex">("codex");
   const [claudeModel, setClaudeModel] = useState<string | null>(null);
@@ -191,8 +191,8 @@ export function SettingsPanel({ onClose, onFontSizeChange }: SettingsPanelProps)
 
   return (
     <Modal
-      title="Cài đặt chung"
-      subtitle="Áp dụng cho toàn bộ ứng dụng, có thể ghi đè theo từng phòng"
+      title={t("settings.title")}
+      subtitle={t("settings.subtitle")}
       onClose={onClose}
       width="max-w-lg"
       footer={
@@ -200,59 +200,68 @@ export function SettingsPanel({ onClose, onFontSizeChange }: SettingsPanelProps)
           className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-sm font-medium text-white transition hover:bg-indigo-700"
           onClick={onClose}
         >
-          Đóng
+          {t("common.close")}
         </button>
       }
     >
       <div className="mb-4 flex gap-1 rounded-lg bg-neutral-100 p-1 dark:bg-neutral-800">
-        {TABS.map((t) => (
+        {TABS.map((tb) => (
           <button
-            key={t.id}
+            key={tb.id}
             className={`flex-1 rounded-md py-1.5 text-sm font-medium transition ${
-              tab === t.id
+              tab === tb.id
                 ? "bg-white text-neutral-900 shadow-sm dark:bg-neutral-700 dark:text-neutral-100"
                 : "text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
             }`}
-            onClick={() => setTab(t.id)}
+            onClick={() => setTab(tb.id)}
           >
-            {t.label}
+            {tb.label}
           </button>
         ))}
       </div>
 
       {tab === "general" && (
         <>
-          <Section title="Giao diện">
-            <Field label="Chế độ sáng/tối">
+          <Section title={t("settings.section.appearance")}>
+            <Field label={t("settings.themeLabel")}>
               <button
                 className="flex w-full items-center justify-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
                 onClick={toggleTheme}
               >
                 {theme === "dark" ? <IconSun className="h-4 w-4" /> : <IconMoon className="h-4 w-4" />}
-                {theme === "dark" ? "Đang tối — chuyển sang sáng" : "Đang sáng — chuyển sang tối"}
+                {theme === "dark" ? t("settings.themeDark") : t("settings.themeLight")}
               </button>
             </Field>
-            <Field label="Cỡ chữ tin nhắn">
+            <Field label={t("settings.fontSizeLabel")}>
               <select
                 className={selectClass}
                 value={fontSize}
                 onChange={(e) => changeFontSize(e.target.value as "sm" | "base" | "lg")}
               >
-                {FONT_SIZE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
+                {FONT_SIZE_VALUES.map((v) => (
+                  <option key={v} value={v}>
+                    {t(`settings.fontSize.${v}` as const)}
                   </option>
                 ))}
               </select>
             </Field>
           </Section>
 
-          <Section title="Ngân sách ngữ cảnh">
-            <Field label="Kích hoạt tóm tắt khi vượt ngưỡng">
+          <Section title={t("settings.section.language")}>
+            <Field label={t("settings.languageLabel")}>
+              <select className={selectClass} value={lang} onChange={(e) => setLang(e.target.value as Lang)}>
+                <option value="en">English</option>
+                <option value="vi">Tiếng Việt</option>
+              </select>
+            </Field>
+          </Section>
+
+          <Section title={t("settings.section.contextBudget")}>
+            <Field label={t("settings.contextBudgetLabel")}>
               <select className={selectClass} value={budget} onChange={(e) => changeBudget(Number(e.target.value))}>
                 {BUDGET_PRESETS.map((p) => (
                   <option key={p} value={p}>
-                    {formatTokens(p)} token
+                    {formatTokens(p)} {t("context.tokens")}
                   </option>
                 ))}
               </select>
@@ -263,7 +272,7 @@ export function SettingsPanel({ onClose, onFontSizeChange }: SettingsPanelProps)
 
       {tab === "models" && (
         <>
-          <Section title="Trạng thái CLI">
+          <Section title={t("settings.section.cliStatus")}>
             <div className="flex items-center justify-between">
               <span className="text-sm text-neutral-700 dark:text-neutral-300">Claude CLI</span>
               <StatusPill ok={claudeOk} />
@@ -274,18 +283,18 @@ export function SettingsPanel({ onClose, onFontSizeChange }: SettingsPanelProps)
             </div>
           </Section>
 
-          <Section title="Model mặc định cho từng agent">
+          <Section title={t("settings.section.defaultModels")}>
             <Field label="Claude">
               <ModelSelect agentKind="claude" value={claudeModel} onChange={(m) => changeModel("claude", m)} />
             </Field>
             <Field label="Codex">
               <ModelSelect agentKind="codex" value={codexModel} onChange={(m) => changeModel("codex", m)} />
             </Field>
-            <p className="text-xs text-neutral-400">Có thể ghi đè riêng cho từng phòng ở "Cài đặt phòng".</p>
+            <p className="text-xs text-neutral-400">{t("settings.roomOverrideNote")}</p>
           </Section>
 
-          <Section title="Agent điều phối (tóm tắt hội thoại)">
-            <Field label="Agent">
+          <Section title={t("settings.section.orchestrator")}>
+            <Field label={t("settings.orchestratorAgentLabel")}>
               <select
                 className={selectClass}
                 value={orchestratorKind}
@@ -295,7 +304,7 @@ export function SettingsPanel({ onClose, onFontSizeChange }: SettingsPanelProps)
                 <option value="claude">Claude</option>
               </select>
             </Field>
-            <Field label="Model">
+            <Field label={t("settings.orchestratorModelLabel")}>
               <ModelSelect
                 key={orchestratorKind}
                 agentKind={orchestratorKind}

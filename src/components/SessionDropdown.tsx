@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Session } from "../lib/tauriApi";
 import { IconChat, IconClose, IconPlus } from "./icons";
+import { useLang } from "../lib/i18n";
 
 interface Props {
   sessions: Session[];
@@ -12,6 +13,7 @@ interface Props {
 }
 
 export function SessionDropdown({ sessions, activeSessionId, onSelect, onCreate, onDelete, onRename }: Props) {
+  const { t } = useLang();
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -49,13 +51,13 @@ export function SessionDropdown({ sessions, activeSessionId, onSelect, onCreate,
         onClick={() => setOpen((o) => !o)}
       >
         <IconChat className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
-        <span className="truncate">{active?.name ?? "Chọn cuộc trò chuyện"}</span>
+        <span className="truncate">{active?.name ?? t("session.selectPlaceholder")}</span>
         <span className="text-neutral-400">({sessions.length})</span>
       </button>
       <button
         className="ml-1 flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 dark:hover:bg-neutral-900"
         onClick={onCreate}
-        title="Tạo cuộc trò chuyện mới"
+        title={t("session.new")}
       >
         <IconPlus className="h-3.5 w-3.5" />
       </button>
@@ -63,7 +65,7 @@ export function SessionDropdown({ sessions, activeSessionId, onSelect, onCreate,
       {open && (
         <div className="absolute left-3 top-full z-20 mt-1 max-h-80 w-72 overflow-y-auto rounded-xl border border-neutral-200 bg-white py-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-800">
           {sessions.length === 0 && (
-            <div className="px-3 py-4 text-center text-xs text-neutral-400">Chưa có cuộc trò chuyện nào.</div>
+            <div className="px-3 py-4 text-center text-xs text-neutral-400">{t("session.empty")}</div>
           )}
           {sessions.map((s) => (
             <div
@@ -99,14 +101,14 @@ export function SessionDropdown({ sessions, activeSessionId, onSelect, onCreate,
                 <>
                   <button
                     className="rounded p-1 text-neutral-400 opacity-0 hover:bg-black/5 group-hover:opacity-100 dark:hover:bg-white/10"
-                    title="Đổi tên"
+                    title={t("session.rename")}
                     onClick={() => startEdit(s)}
                   >
                     ✎
                   </button>
                   <button
                     className="rounded p-1 text-neutral-400 opacity-0 hover:bg-black/5 group-hover:opacity-100 dark:hover:bg-white/10"
-                    title="Xóa cuộc trò chuyện"
+                    title={t("session.delete")}
                     onClick={() => onDelete(s.id)}
                   >
                     <IconClose className="h-3.5 w-3.5" />
@@ -124,7 +126,7 @@ export function SessionDropdown({ sessions, activeSessionId, onSelect, onCreate,
               }}
             >
               <IconPlus className="h-3.5 w-3.5" />
-              Tạo cuộc trò chuyện mới
+              {t("session.new")}
             </button>
           </div>
         </div>

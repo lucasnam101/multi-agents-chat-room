@@ -7,6 +7,7 @@ import { ActivityThread } from "./ActivityThread";
 import { InAppBrowser } from "./InAppBrowser";
 import { formatTokens } from "./SettingsPanel";
 import { IconClose, IconFolder, IconPause, IconPlay, IconSend } from "./icons";
+import { useLang } from "../lib/i18n";
 
 const AGENT_OPTIONS = ["claude", "codex"];
 const MAX_SUGGESTIONS = 8;
@@ -25,6 +26,8 @@ const MIME_BY_EXTENSION: Record<string, string> = {
 
 type Suggestion = { type: "agent"; value: string } | { type: "file"; value: string };
 
+const COMPOSER_MAX_HEIGHT_PX = 160; // keep in sync with the max-h-40 class on the textarea
+
 function baseName(path: string): string {
   return path.split(/[/\\]/).pop() ?? path;
 }
@@ -38,6 +41,7 @@ export function ChatView({
   roomId: string;
   fontSizeClass?: string;
 }) {
+  const { t } = useLang();
   const [messages, setMessages] = useState<Message[]>([]);
   const [toolEvents, setToolEvents] = useState<Record<number, AgentUpdate[]>>({});
   const [phases, setPhases] = useState<Record<number, TurnPhase>>({});
@@ -177,6 +181,16 @@ export function ChatView({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Auto-grow the composer with content (up to a max height, then it
+  // scrolls internally) instead of a fixed-size box — a plain `rows`
+  // attribute doesn't respond to wrapped/typed lines at all.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_HEIGHT_PX)}px`;
+  }, [draft]);
+
   // Debounced file-path lookup for the "@" autocomplete (file half of it —
   // agent-name matches are computed synchronously, see `suggestions` below).
   useEffect(() => {
@@ -313,10 +327,10 @@ export function ChatView({
           } disabled:opacity-50`}
           onClick={toggleAgents}
           disabled={agentsBusy}
-          title={agentsRunning ? "Dừng agent của cuộc trò chuyện này" : "Khởi động agent cho cuộc trò chuyện này"}
+          title={agentsRunning ? t("agents.stopTooltip") : t("agents.startTooltip")}
         >
           {agentsRunning ? <IconPause className="h-3 w-3" /> : <IconPlay className="h-3 w-3" />}
-          {agentsRunning ? "Agent đang chạy" : "Agent đang tạm dừng"}
+          {agentsRunning ? t("agents.running") : t("agents.paused")}
         </button>
 
         {contextUsage && (
@@ -329,7 +343,8 @@ export function ChatView({
                 }}
               />
             </span>
-            Ngữ cảnh: {formatTokens(contextUsage.used_tokens)}/{formatTokens(contextUsage.budget_tokens)} token
+            {t("context.label")}: {formatTokens(contextUsage.used_tokens)}/{formatTokens(contextUsage.budget_tokens)}{" "}
+            {t("context.tokens")}
           </div>
         )}
       </div>
@@ -337,8 +352,8 @@ export function ChatView({
         <div className="flex flex-col gap-3">
           {messages.length === 0 && (
             <div className="mt-16 text-center text-sm text-neutral-400">
-              Chưa có tin nhắn nào. Nhắn <span className="font-mono">@claude</span> hoặc{" "}
-              <span className="font-mono">@codex</span> để giao việc, hoặc nhắn trực tiếp để trợ lý trả lời.
+              {t("chat.emptyLine1")} <span className="font-mono">@claude</span> {t("chat.emptyOr")}{" "}
+              <span className="font-mono">@codex</span> {t("chat.emptySuffix")}
             </div>
           )}
           {messages.map((m) => (
@@ -407,17 +422,17 @@ export function ChatView({
             <button
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-neutral-400 transition hover:bg-neutral-200 hover:text-neutral-600 dark:hover:bg-neutral-700 dark:hover:text-neutral-200"
               onClick={pickAttachments}
-              title="Đính kèm ảnh/file"
-              aria-label="Đính kèm ảnh/file"
+              title={t("composer.attachTooltip")}
+              aria-label={t("composer.attachTooltip")}
             >
               +
             </button>
             <textarea
               ref={inputRef}
-              className="max-h-40 flex-1 resize-none bg-transparent px-2.5 py-2 text-sm text-neutral-900 outline-none placeholder:text-neutral-400 dark:text-neutral-100"
+              className="max-h-40 flex-1 resize-none overflow-y-auto bg-transparent px-2.5 py-2 text-sm text-neutral-900 outline-none placeholder:text-neutral-400 dark:text-neutral-100"
               rows={1}
               value={draft}
-              placeholder="Nhắn tin... dùng @claude hoặc @codex để giao việc"
+              placeholder={t("composer.placeholder")}
               onChange={(e) => handleDraftChange(e.target.value)}
               onKeyDown={handleKeyDown}
             />
@@ -425,7 +440,7 @@ export function ChatView({
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white transition hover:bg-indigo-700 disabled:opacity-40"
               disabled={!draft.trim() && pendingAttachments.length === 0}
               onClick={send}
-              aria-label="Gửi"
+              aria-label={t("composer.send")}
             >
               <IconSend className="h-4 w-4" />
             </button>

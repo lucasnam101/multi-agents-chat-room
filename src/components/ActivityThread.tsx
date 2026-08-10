@@ -1,16 +1,10 @@
 import { useEffect, useRef } from "react";
 import type { AgentUpdate, Message } from "../lib/tauriApi";
 import type { TurnPhase } from "./MessageBubble";
+import { useAuthorLabel } from "./MessageBubble";
 import { TypingIndicator } from "./TypingIndicator";
 import { IconClose, IconWrench } from "./icons";
-
-const AUTHOR_LABEL: Record<Message["author_kind"], string> = {
-  user: "Bạn",
-  claude: "Claude",
-  codex: "Codex",
-  system: "Hệ thống",
-  orchestrator: "Trợ lý",
-};
+import { useLang } from "../lib/i18n";
 
 interface Props {
   authorKind: Message["author_kind"];
@@ -39,12 +33,13 @@ function extractText(raw: unknown): string | null {
 }
 
 function ActivityEntry({ event, index }: { event: AgentUpdate; index: number }) {
+  const { t } = useLang();
   if (event.kind === "tool_call") {
     return (
       <div className="rounded-lg border border-neutral-200 bg-white px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900">
         <div className="flex items-center gap-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-300">
           <IconWrench className="h-3.5 w-3.5 shrink-0" />
-          <span className="truncate font-mono">{event.title || "công cụ"}</span>
+          <span className="truncate font-mono">{event.title || t("tool.defaultName")}</span>
         </div>
       </div>
     );
@@ -77,6 +72,8 @@ function ActivityEntry({ event, index }: { event: AgentUpdate; index: number }) 
 }
 
 export function ActivityThread({ authorKind, events, phase, onClose }: Props) {
+  const { t } = useLang();
+  const AUTHOR_LABEL = useAuthorLabel();
   const bottomRef = useRef<HTMLDivElement>(null);
   const isRunning = phase !== undefined;
 
@@ -89,7 +86,7 @@ export function ActivityThread({ authorKind, events, phase, onClose }: Props) {
       <div className="flex shrink-0 items-center justify-between border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
         <div>
           <h3 className="flex items-center gap-2 text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-            Hoạt động của {AUTHOR_LABEL[authorKind]}
+            {t("activity.titlePrefix")} {AUTHOR_LABEL[authorKind]}
             <span
               className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
                 isRunning
@@ -98,15 +95,15 @@ export function ActivityThread({ authorKind, events, phase, onClose }: Props) {
               }`}
             >
               <span className={`h-1.5 w-1.5 rounded-full ${isRunning ? "bg-amber-500" : "bg-emerald-500"}`} />
-              {isRunning ? "đang chạy" : "hoàn tất"}
+              {isRunning ? t("activity.running") : t("activity.done")}
             </span>
           </h3>
-          <p className="text-[11px] text-neutral-400">Chỉ để quan sát — không gửi vào ngữ cảnh chung</p>
+          <p className="text-[11px] text-neutral-400">{t("activity.subtitle")}</p>
         </div>
         <button
           className="rounded-full p-1.5 text-neutral-400 hover:bg-neutral-200 hover:text-neutral-600 dark:hover:bg-neutral-800 dark:hover:text-neutral-300"
           onClick={onClose}
-          aria-label="Đóng"
+          aria-label={t("common.close")}
         >
           <IconClose className="h-4 w-4" />
         </button>
@@ -114,7 +111,7 @@ export function ActivityThread({ authorKind, events, phase, onClose }: Props) {
 
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
         {events.length === 0 && !isRunning && (
-          <div className="mt-8 text-center text-xs text-neutral-400">Chưa có hoạt động nào được ghi nhận.</div>
+          <div className="mt-8 text-center text-xs text-neutral-400">{t("activity.empty")}</div>
         )}
         {events.map((event, i) => (
           <ActivityEntry key={i} event={event} index={i} />
@@ -122,7 +119,11 @@ export function ActivityThread({ authorKind, events, phase, onClose }: Props) {
         {isRunning && (
           <div className="flex items-center gap-2 px-1 text-xs text-neutral-400">
             <TypingIndicator />
-            {phase === "thinking" ? "đang suy nghĩ…" : phase === "tool" ? "vẫn đang chạy công cụ…" : "đang trả lời…"}
+            {phase === "thinking"
+              ? t("activity.thinking")
+              : phase === "tool"
+                ? t("activity.runningTool")
+                : t("activity.replying")}
           </div>
         )}
         <div ref={bottomRef} />

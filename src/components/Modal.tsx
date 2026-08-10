@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { IconClose } from "./icons";
+import { useLang } from "../lib/i18n";
 
 interface Props {
   title: string;
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export function Modal({ title, subtitle, onClose, children, footer, width = "max-w-md" }: Props) {
+  const { t } = useLang();
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/40 backdrop-blur-sm"
@@ -29,7 +31,7 @@ export function Modal({ title, subtitle, onClose, children, footer, width = "max
           <button
             className="rounded-full p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800 dark:hover:text-neutral-300"
             onClick={onClose}
-            aria-label="Đóng"
+            aria-label={t("common.close")}
           >
             <IconClose className="h-4 w-4" />
           </button>

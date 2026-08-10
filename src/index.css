@@ -39,6 +39,39 @@ body {
   animation: typing-bounce 1.2s infinite ease-in-out;
 }
 
+/* Message bubbles set their own text color per author (white on the user's
+   indigo bubble, near-black/near-white on the light/dark agent bubbles) —
+   but Tailwind Typography's `.prose` hardcodes its own gray text/marker
+   colors regardless of that, via these CSS variables. In light mode this
+   silently overrode the intended *white* text on the user's bubble with
+   Typography's default dark-gray body color — a real a11y contrast failure
+   (dark-gray-on-indigo), not just the reported list-bullet symptom (bullets
+   use the same mechanism: --tw-prose-bullets). Forcing every prose text
+   color to currentColor makes markdown content always inherit the bubble's
+   actual intended color instead. `--tw-prose-pre-*` (code block bg/text)
+   are deliberately left alone — those are a self-contained dark box by
+   design and look correct regardless of the surrounding bubble's theme. */
+.prose {
+  --tw-prose-body: currentColor;
+  --tw-prose-headings: currentColor;
+  --tw-prose-lead: currentColor;
+  --tw-prose-links: currentColor;
+  --tw-prose-bold: currentColor;
+  --tw-prose-counters: currentColor;
+  --tw-prose-bullets: currentColor;
+  --tw-prose-hr: currentColor;
+  --tw-prose-quotes: currentColor;
+  --tw-prose-quote-borders: currentColor;
+  --tw-prose-captions: currentColor;
+  --tw-prose-code: currentColor;
+  --tw-prose-th-borders: currentColor;
+  --tw-prose-td-borders: currentColor;
+}
+.prose :where(ul > li)::marker,
+.prose :where(ol > li)::marker {
+  opacity: 0.7;
+}
+
 @keyframes fade-in-up {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }

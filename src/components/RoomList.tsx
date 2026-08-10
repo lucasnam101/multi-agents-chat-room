@@ -3,6 +3,7 @@ import type { Room, RoomAgentStatus } from "../lib/tauriApi";
 import { api } from "../lib/tauriApi";
 import { IconChat, IconFolder, IconPlus } from "./icons";
 import { ThemeToggle } from "./ThemeToggle";
+import { useLang } from "../lib/i18n";
 
 interface Props {
   rooms: Room[];
@@ -23,6 +24,7 @@ function AgentBadge({ status }: { status: RoomAgentStatus }) {
 }
 
 export function RoomList({ rooms, activeRoomId, onSelect, onCreateClick }: Props) {
+  const { t } = useLang();
   const [statuses, setStatuses] = useState<Record<string, RoomAgentStatus[]>>({});
 
   useEffect(() => {
@@ -64,16 +66,16 @@ export function RoomList({ rooms, activeRoomId, onSelect, onCreateClick }: Props
           onClick={onCreateClick}
         >
           <IconPlus className="h-4 w-4" />
-          Phòng mới
+          {t("room.new")}
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 pb-2">
         {rooms.length === 0 && (
           <div className="mx-2 mt-6 rounded-xl border border-dashed border-neutral-200 p-4 text-center text-xs text-neutral-400 dark:border-neutral-800">
-            Chưa có phòng nào.
+            {t("room.emptyLine1")}
             <br />
-            Tạo phòng để bắt đầu.
+            {t("room.emptyLine2")}
           </div>
         )}
         {rooms.map((room) => {

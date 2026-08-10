@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/tauriApi";
 import { Modal } from "./Modal";
 import { ModelSelect } from "./SettingsPanel";
+import { useLang } from "../lib/i18n";
 
 export function RoomSettingsPanel({ roomId, onClose }: { roomId: string; onClose: () => void }) {
+  const { t } = useLang();
   const [claudeModel, setClaudeModel] = useState<string | null>(null);
   const [codexModel, setCodexModel] = useState<string | null>(null);
   const [orchestratorModel, setOrchestratorModel] = useState<string | null>(null);
@@ -25,40 +27,40 @@ export function RoomSettingsPanel({ roomId, onClose }: { roomId: string; onClose
 
   return (
     <Modal
-      title="Cài đặt phòng"
-      subtitle="Ghi đè model riêng cho phòng này — để trống để dùng cài đặt chung"
+      title={t("roomSettings.title")}
+      subtitle={t("roomSettings.subtitle")}
       onClose={onClose}
       footer={
         <button
           className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-sm font-medium text-white transition hover:bg-indigo-700"
           onClick={onClose}
         >
-          Đóng
+          {t("common.close")}
         </button>
       }
     >
       <label className="mb-1.5 block text-sm font-medium text-neutral-600 dark:text-neutral-400">
-        Model Claude cho phòng này
+        {t("roomSettings.claudeModelLabel")}
       </label>
       <div className="mb-4">
         <ModelSelect agentKind="claude" value={claudeModel} onChange={(m) => change("claude", m)} />
       </div>
 
       <label className="mb-1.5 block text-sm font-medium text-neutral-600 dark:text-neutral-400">
-        Model Codex cho phòng này
+        {t("roomSettings.codexModelLabel")}
       </label>
       <div className="mb-4">
         <ModelSelect agentKind="codex" value={codexModel} onChange={(m) => change("codex", m)} />
       </div>
 
       <label className="mb-1.5 block text-sm font-medium text-neutral-600 dark:text-neutral-400">
-        Model điều phối (orchestrator) cho phòng này
+        {t("roomSettings.orchestratorModelLabel")}
       </label>
       <div>
         <ModelSelect agentKind={orchestratorKind} value={orchestratorModel} onChange={(m) => change("orchestrator", m)} />
       </div>
       <p className="mt-1.5 text-xs text-neutral-400">
-        Đang dùng CLI điều phối chung: {orchestratorKind === "claude" ? "Claude" : "Codex"} (đổi ở Cài đặt chung).
+        {t("roomSettings.orchestratorNote", { kind: orchestratorKind === "claude" ? "Claude" : "Codex" })}
       </p>
     </Modal>
   );

@@ -9,8 +9,10 @@ import { fontSizeToProseClass } from "./components/SettingsPanel";
 import { IconFolder, IconSliders, IconSettings } from "./components/icons";
 import type { Room, Session } from "./lib/tauriApi";
 import { api, onSessionRenamed } from "./lib/tauriApi";
+import { useLang } from "./lib/i18n";
 
 function App() {
+  const { t } = useLang();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -76,7 +78,7 @@ function App() {
   }
 
   async function handleDeleteSession(sessionId: string) {
-    if (!window.confirm("Xóa cuộc trò chuyện này? Toàn bộ lịch sử chat sẽ mất.")) return;
+    if (!window.confirm(t("app.confirm.deleteSession"))) return;
     await api.deleteSession(sessionId);
     setSessions((prev) => {
       const next = prev.filter((s) => s.id !== sessionId);
@@ -108,7 +110,7 @@ function App() {
           <div className="flex min-w-0 items-center gap-2">
             <IconFolder className="h-4 w-4 shrink-0 text-neutral-400" />
             <span className="truncate text-sm font-medium text-neutral-700 dark:text-neutral-300">
-              {activeRoom?.name ?? "Chưa chọn phòng"}
+              {activeRoom?.name ?? t("app.header.noRoomSelected")}
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-1">
@@ -116,19 +118,19 @@ function App() {
               <button
                 className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
                 onClick={() => setShowRoomSettings(true)}
-                title="Cài đặt phòng"
+                title={t("app.header.roomSettingsTitle")}
               >
                 <IconSliders className="h-3.5 w-3.5" />
-                Phòng
+                {t("app.header.room")}
               </button>
             )}
             <button
               className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
               onClick={() => setShowSettings(true)}
-              title="Cài đặt chung"
+              title={t("app.header.generalSettingsTitle")}
             >
               <IconSettings className="h-3.5 w-3.5" />
-              Chung
+              {t("app.header.general")}
             </button>
           </div>
         </div>
@@ -153,9 +155,7 @@ function App() {
           />
         ) : (
           <div className="flex flex-1 items-center justify-center text-sm text-neutral-400">
-            {activeRoomId
-              ? "Chưa có cuộc trò chuyện nào. Bấm + để tạo mới."
-              : "Tạo hoặc chọn một phòng để bắt đầu chat."}
+            {activeRoomId ? t("app.empty.noSessions") : t("app.empty.noRoom")}
           </div>
         )}
       </div>

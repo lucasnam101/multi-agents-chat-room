@@ -4,16 +4,22 @@ import remarkBreaks from "remark-breaks";
 import type { AgentUpdate, Message } from "../lib/tauriApi";
 import { TypingIndicator } from "./TypingIndicator";
 import { IconFolder, IconWrench } from "./icons";
+import { useLang } from "../lib/i18n";
 
 export type TurnPhase = "thinking" | "tool" | "streaming";
 
-const AUTHOR_LABEL: Record<Message["author_kind"], string> = {
-  user: "Bạn",
-  claude: "Claude",
-  codex: "Codex",
-  system: "Hệ thống",
-  orchestrator: "Trợ lý",
-};
+// "Claude"/"Codex" are proper nouns, not translated. The rest (You/System/
+// Assistant) are app-chrome labels.
+export function useAuthorLabel(): Record<Message["author_kind"], string> {
+  const { t } = useLang();
+  return {
+    user: t("author.you"),
+    claude: "Claude",
+    codex: "Codex",
+    system: t("author.system"),
+    orchestrator: t("author.orchestrator"),
+  };
+}
 
 // One accent per author — carried through the avatar chip, the name label,
 // and the bubble's left rule so a room with multiple agents stays scannable
@@ -34,8 +40,8 @@ const AUTHOR_BUBBLE: Record<Message["author_kind"], string> = {
   system: "bg-neutral-100 text-neutral-500 dark:bg-neutral-800/60 dark:text-neutral-400",
 };
 
-function Avatar({ authorKind }: { authorKind: Message["author_kind"] }) {
-  const initial = authorKind === "user" ? "B" : AUTHOR_LABEL[authorKind][0];
+function Avatar({ authorKind, label }: { authorKind: Message["author_kind"]; label: string }) {
+  const initial = label[0]?.toUpperCase() ?? "?";
   return (
     <div
       className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold text-white ${AUTHOR_ACCENT[authorKind]}`}
@@ -62,6 +68,8 @@ export function MessageBubble({
   onOpenLink,
   fontSizeClass = "prose-base",
 }: Props) {
+  const { t } = useLang();
+  const AUTHOR_LABEL = useAuthorLabel();
   const isToolActivity = message.message_type === "tool_call" || message.message_type === "tool_result";
   const isUser = message.author_kind === "user";
   const isSystem = message.author_kind === "system";
@@ -70,7 +78,7 @@ export function MessageBubble({
     return (
       <details className="max-w-[85%] self-start rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs dark:border-neutral-800 dark:bg-neutral-900">
         <summary className="cursor-pointer font-mono text-neutral-500 dark:text-neutral-400">
-          {AUTHOR_LABEL[message.author_kind]} · hoạt động công cụ
+          {AUTHOR_LABEL[message.author_kind]} · {t("toolActivity.label")}
         </summary>
         <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap font-mono text-neutral-600 dark:text-neutral-300">
           {message.content}
@@ -89,7 +97,7 @@ export function MessageBubble({
 
   return (
     <div className={`flex max-w-[75%] items-end gap-2 ${isUser ? "flex-row-reverse self-end" : "self-start"}`}>
-      <Avatar authorKind={message.author_kind} />
+      <Avatar authorKind={message.author_kind} label={AUTHOR_LABEL[message.author_kind]} />
       <div
         className={`flex min-w-0 flex-col overflow-x-hidden rounded-2xl px-3.5 py-2.5 ${AUTHOR_BUBBLE[message.author_kind]}`}
       >
@@ -99,7 +107,7 @@ export function MessageBubble({
             {phase !== undefined && (
               <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
-                đang chạy
+                {t("badge.running")}
               </span>
             )}
           </span>
@@ -140,7 +148,7 @@ export function MessageBubble({
           </span>
         ) : message.content !== "" ? (
           <div
-            className={`prose ${fontSizeClass} dark:prose-invert max-w-none break-words [&_p]:my-1 [&_pre]:overflow-x-auto [&_hr]:my-3 [&_hr]:border-current [&_hr]:opacity-20`}
+            className={`prose ${fontSizeClass} max-w-none break-words [&_p]:my-1 [&_pre]:overflow-x-auto [&_hr]:my-3 [&_hr]:border-current [&_hr]:opacity-20`}
           >
             <ReactMarkdown
               remarkPlugins={[remarkGfm, remarkBreaks]}
@@ -174,7 +182,7 @@ export function MessageBubble({
         {phase === "tool" && (
           <span className="mt-1 inline-flex items-center gap-1.5 text-[11px] opacity-70">
             <IconWrench className="h-3 w-3" />
-            đang dùng công cụ…
+            {t("tool.usingTool")}
             <TypingIndicator />
           </span>
         )}
@@ -185,7 +193,7 @@ export function MessageBubble({
             onClick={onOpenThread}
           >
             <IconWrench className="h-3 w-3" />
-            {toolEvents.length} hoạt động — xem chi tiết
+            {t("tool.viewDetails", { n: String(toolEvents.length) })}
           </button>
         )}
       </div>
