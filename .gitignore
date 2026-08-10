@@ -22,6 +22,9 @@ scratch_test_folder/
 error.png
 .omc/
 
+# Internal planning doc — kept locally, not published
+NEW_TOOL_PLAN_V2.md
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
