@@ -5,6 +5,8 @@ export interface Room {
   id: string;
   name: string;
   folder_path: string;
+  pinned: boolean;
+  sort_order: number;
 }
 
 export interface RoomAgentStatus {
@@ -33,6 +35,7 @@ export interface Message {
   message_type: "chat" | "tool_call" | "tool_result" | "system_note";
   content: string;
   attachments: Attachment[];
+  model: string | null;
 }
 
 export type AgentUpdate =
@@ -72,6 +75,11 @@ export const api = {
     invoke<void>("tag_agent", { roomId, agentKind }),
   roomAgentStatuses: (roomId: string) =>
     invoke<RoomAgentStatus[]>("room_agent_statuses", { roomId }),
+  setRoomPinned: (roomId: string, pinned: boolean) =>
+    invoke<void>("set_room_pinned", { roomId, pinned }),
+  reorderRooms: (roomIds: string[]) => invoke<void>("reorder_rooms", { roomIds }),
+  deleteRoom: (roomId: string) => invoke<void>("delete_room", { roomId }),
+  resolveApproval: (requestId: string, optionId: string) => invoke<void>("resolve_approval", { requestId, optionId }),
 
   listSessions: (roomId: string) => invoke<Session[]>("list_sessions", { roomId }),
   createSession: (roomId: string, name?: string) =>
@@ -80,6 +88,7 @@ export const api = {
   renameSession: (sessionId: string, name: string) => invoke<void>("rename_session", { sessionId, name }),
   ensureSessionAgents: (sessionId: string) => invoke<void>("ensure_session_agents", { sessionId }),
   stopSessionAgents: (sessionId: string) => invoke<void>("stop_session_agents", { sessionId }),
+  cancelTurn: (sessionId: string) => invoke<void>("cancel_turn", { sessionId }),
   sessionAgentStatuses: (sessionId: string) =>
     invoke<RoomAgentStatus[]>("session_agent_statuses", { sessionId }),
 
@@ -110,12 +119,14 @@ export const api = {
 
   getChatFontSize: () => invoke<"sm" | "base" | "lg">("get_chat_font_size"),
   setChatFontSize: (size: "sm" | "base" | "lg") => invoke<void>("set_chat_font_size", { size }),
+  openTerminal: (roomId: string) => invoke<void>("open_terminal", { roomId }),
 };
 
 export interface MessageUpdatedEvent {
   id: number;
   session_id: string;
   content: string;
+  model?: string | null;
 }
 
 export function onMessageInserted(callback: (message: Message) => void) {
@@ -137,4 +148,16 @@ export interface SessionRenamedEvent {
 
 export function onSessionRenamed(callback: (payload: SessionRenamedEvent) => void) {
   return listen<SessionRenamedEvent>("session-renamed", (event) => callback(event.payload));
+}
+
+export interface ApprovalRequest {
+  request_id: string;
+  session_id: string;
+  agent_kind: "claude" | "codex";
+  title: string;
+  options: Array<{ optionId: string; name?: string; description?: string }>;
+}
+
+export function onApprovalRequest(callback: (payload: ApprovalRequest) => void) {
+  return listen<ApprovalRequest>("approval-request", (event) => callback(event.payload));
 }

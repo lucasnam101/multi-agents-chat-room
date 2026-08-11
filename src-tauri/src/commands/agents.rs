@@ -1,5 +1,10 @@
 use serde::Serialize;
 use tauri::State;
+use tauri::Emitter;
+use tokio::sync::oneshot;
+use std::sync::Arc;
+use std::future::Future;
+use std::pin::Pin;
 use uuid::Uuid;
 
 use crate::acp::{AcpClient, AgentKind, ModelInfo};
@@ -155,7 +160,7 @@ pub async fn get_room_model(
         "SELECT model FROM room_agent_settings WHERE room_id = $1 AND agent_kind = $2",
     )
     .bind(room_id)
-    .bind(agent_kind)
+    .bind(&agent_kind)
     .fetch_optional(&state.db)
     .await
     .map(|opt| opt.flatten())
@@ -171,17 +176,35 @@ pub async fn set_room_model(
     agent_kind: String,
     model: Option<String>,
 ) -> Result<(), String> {
+    if !["claude", "codex", "orchestrator"].contains(&agent_kind.as_str()) {
+        return Err("invalid room agent kind".into());
+    }
     sqlx::query(
         "INSERT INTO room_agent_settings (room_id, agent_kind, model) VALUES ($1, $2, $3)
          ON CONFLICT (room_id, agent_kind) DO UPDATE SET model = EXCLUDED.model",
     )
     .bind(room_id)
-    .bind(agent_kind)
+    .bind(&agent_kind)
     .bind(model)
     .execute(&state.db)
     .await
-    .map(|_| ())
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+
+    // ACP sessions receive their model at session/new. A live Claude/Codex
+    // session therefore must be recycled after a room override changes;
+    // otherwise the next prompt would silently keep using the old model.
+    if agent_kind != "orchestrator" {
+        let sessions: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM sessions WHERE room_id = $1")
+            .bind(room_id)
+            .fetch_all(&state.db)
+            .await
+            .map_err(|e| e.to_string())?;
+        for session_id in sessions {
+            state.process_manager.cancel_for(session_id).await;
+            state.process_manager.shutdown_for(session_id).await;
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -273,7 +296,55 @@ pub async fn ensure_session_agents(state: State<'_, AppState>, session_id: Uuid)
 /// the next real turn — this only tears down the pre-warmed idle processes.
 #[tauri::command]
 pub async fn stop_session_agents(state: State<'_, AppState>, session_id: Uuid) -> Result<(), String> {
+    state.process_manager.cancel_for(session_id).await;
     state.process_manager.shutdown_for(session_id).await;
+    Ok(())
+}
+
+/// Interrupt the turn currently in flight for a session, without tearing
+/// down the underlying agent process (unlike `stop_session_agents`) — the
+/// CLI-style "stop this answer" action, not "pause this conversation".
+#[tauri::command]
+pub async fn cancel_turn(state: State<'_, AppState>, session_id: Uuid) -> Result<(), String> {
+    state.process_manager.cancel_for(session_id).await;
+    Ok(())
+}
+
+pub fn permission_handler(
+    app: tauri::AppHandle,
+    store: Arc<crate::ApprovalStore>,
+    session_id: Uuid,
+    kind: AgentKind,
+) -> crate::acp::PermissionHandler {
+    Arc::new(move |wire| {
+        let app = app.clone();
+        let store = store.clone();
+        Box::pin(async move {
+            let request_id = wire.get("id").map(|id| id.to_string()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let (sender, receiver) = oneshot::channel();
+            store.pending.lock().await.insert(request_id.clone(), sender);
+            let options = wire.pointer("/params/options").cloned().unwrap_or_else(|| serde_json::json!([]));
+            let _ = app.emit("approval-request", serde_json::json!({
+                "request_id": request_id,
+                "session_id": session_id,
+                "agent_kind": kind.as_str(),
+                "title": wire.pointer("/params/title").and_then(|v| v.as_str()).unwrap_or("Agent asks for permission"),
+                "options": options,
+            }));
+            receiver.await.ok()
+        }) as Pin<Box<dyn Future<Output = Option<String>> + Send>>
+    })
+}
+
+#[tauri::command]
+pub async fn resolve_approval(
+    state: State<'_, AppState>,
+    request_id: String,
+    option_id: String,
+) -> Result<(), String> {
+    if let Some(sender) = state.approvals.pending.lock().await.remove(&request_id) {
+        let _ = sender.send(option_id);
+    }
     Ok(())
 }
 

@@ -8,7 +8,7 @@ import { SessionDropdown } from "./components/SessionDropdown";
 import { fontSizeToProseClass } from "./components/SettingsPanel";
 import { IconFolder, IconSliders, IconSettings } from "./components/icons";
 import type { Room, Session } from "./lib/tauriApi";
-import { api, onSessionRenamed } from "./lib/tauriApi";
+import { api, onApprovalRequest, onSessionRenamed, type ApprovalRequest } from "./lib/tauriApi";
 import { useLang } from "./lib/i18n";
 
 function App() {
@@ -21,6 +21,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showRoomSettings, setShowRoomSettings] = useState(false);
   const [fontSize, setFontSize] = useState<"sm" | "base" | "lg">("base");
+  const [approval, setApproval] = useState<ApprovalRequest | null>(null);
 
   async function refreshRooms() {
     const list = await api.listRooms();
@@ -28,10 +29,41 @@ function App() {
     if (!activeRoomId && list.length > 0) setActiveRoomId(list[0].id);
   }
 
+  async function handleTogglePin(roomId: string) {
+    const room = rooms.find((item) => item.id === roomId);
+    if (!room) return;
+    setRooms((prev) => prev.map((item) => item.id === roomId ? { ...item, pinned: !item.pinned } : item));
+    await api.setRoomPinned(roomId, !room.pinned);
+    await refreshRooms();
+  }
+
+  async function handleReorder(roomIds: string[]) {
+    const byId = new Map(rooms.map((room) => [room.id, room]));
+    setRooms(roomIds.map((id) => byId.get(id)).filter((room): room is Room => Boolean(room)));
+    await api.reorderRooms(roomIds);
+  }
+
+  async function handleDeleteRoom(roomId: string) {
+    if (!window.confirm(t("app.confirm.deleteRoom"))) return;
+    await api.deleteRoom(roomId);
+    setRooms((prev) => {
+      const next = prev.filter((room) => room.id !== roomId);
+      if (activeRoomId === roomId) {
+        setActiveRoomId(next.length > 0 ? next[0].id : null);
+      }
+      return next;
+    });
+  }
+
   useEffect(() => {
     refreshRooms();
     api.getChatFontSize().then(setFontSize);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const unlisten = onApprovalRequest((request) => setApproval(request));
+    return () => { unlisten.then((f) => f()); };
   }, []);
 
   // The orchestrator auto-titles a session from its first user message
@@ -103,6 +135,10 @@ function App() {
         activeRoomId={activeRoomId}
         onSelect={setActiveRoomId}
         onCreateClick={() => setShowCreate(true)}
+        onTogglePin={handleTogglePin}
+        onReorder={handleReorder}
+        onOpenTerminal={(roomId) => api.openTerminal(roomId)}
+        onDelete={handleDeleteRoom}
       />
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -168,6 +204,23 @@ function App() {
       )}
       {showRoomSettings && activeRoomId && (
         <RoomSettingsPanel roomId={activeRoomId} onClose={() => setShowRoomSettings(false)} />
+      )}
+      {approval && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-4 sm:items-center" role="dialog" aria-modal="true" aria-labelledby="approval-title">
+          <div className="w-full max-w-lg rounded-2xl border border-neutral-200 bg-white p-5 shadow-2xl dark:border-neutral-700 dark:bg-neutral-900">
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-indigo-600">{approval.agent_kind}</div>
+            <h2 id="approval-title" className="text-base font-semibold text-neutral-900 dark:text-white">{approval.title}</h2>
+            <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">{t("approval.subtitle")}</p>
+            <div className="mt-4 grid gap-2">
+              {approval.options.map((option) => (
+                <button key={option.optionId} onClick={() => { api.resolveApproval(approval.request_id, option.optionId); setApproval(null); }} className="rounded-xl border border-neutral-200 px-3 py-2 text-left transition hover:border-indigo-400 hover:bg-indigo-50 dark:border-neutral-700 dark:hover:bg-indigo-500/10">
+                  <div className="text-sm font-medium text-neutral-800 dark:text-neutral-100">{option.name ?? option.optionId}</div>
+                  {option.description && <div className="mt-0.5 text-xs text-neutral-500">{option.description}</div>}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -3,7 +3,7 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import type { AgentUpdate, Message } from "../lib/tauriApi";
 import { TypingIndicator } from "./TypingIndicator";
-import { IconFolder, IconWrench } from "./icons";
+import { IconFolder, IconReply, IconWrench } from "./icons";
 import { useLang } from "../lib/i18n";
 
 export type TurnPhase = "thinking" | "tool" | "streaming";
@@ -57,6 +57,7 @@ interface Props {
   phase?: TurnPhase;
   onOpenThread?: () => void;
   onOpenLink?: (url: string) => void;
+  onQuickReply?: (authorKind: "claude" | "codex" | "orchestrator") => void;
   fontSizeClass?: string;
 }
 
@@ -66,6 +67,7 @@ export function MessageBubble({
   phase,
   onOpenThread,
   onOpenLink,
+  onQuickReply,
   fontSizeClass = "prose-base",
 }: Props) {
   const { t } = useLang();
@@ -104,12 +106,7 @@ export function MessageBubble({
         {!isUser && (
           <span className="mb-0.5 flex items-center gap-1.5 text-[11px] font-semibold opacity-70">
             {AUTHOR_LABEL[message.author_kind]}
-            {phase !== undefined && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
-                {t("badge.running")}
-              </span>
-            )}
+            {message.model && <span className="font-normal opacity-70">· {message.model}</span>}
           </span>
         )}
 
@@ -194,6 +191,26 @@ export function MessageBubble({
           >
             <IconWrench className="h-3 w-3" />
             {t("tool.viewDetails", { n: String(toolEvents.length) })}
+          </button>
+        )}
+        {phase !== undefined && (
+          <span className="mt-2 inline-flex self-end items-center gap-1.5 rounded-full bg-amber-500/15 px-2 py-1 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500 opacity-70" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-amber-500" />
+            </span>
+            {t("badge.running")}
+            <TypingIndicator />
+          </span>
+        )}
+        {!isUser && !isSystem && (message.author_kind === "claude" || message.author_kind === "codex" || message.author_kind === "orchestrator") && (
+          <button
+            onClick={() => onQuickReply?.(message.author_kind as "claude" | "codex" | "orchestrator")}
+            className="mt-1 inline-flex w-fit self-end items-center gap-1 rounded-md px-1.5 py-1 text-[11px] opacity-60 transition hover:bg-black/10 hover:opacity-100 dark:hover:bg-white/10"
+            title={`Reply to ${AUTHOR_LABEL[message.author_kind]}`}
+            aria-label={`Reply to ${AUTHOR_LABEL[message.author_kind]}`}
+          >
+            <IconReply className="h-3 w-3" /> Reply
           </button>
         )}
       </div>

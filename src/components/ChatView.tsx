@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { AgentUpdate, Attachment, ContextUsage, Message } from "../lib/tauriApi";
 import { api, onAgentUpdate, onMessageInserted, onMessageUpdated } from "../lib/tauriApi";
@@ -8,6 +8,7 @@ import { InAppBrowser } from "./InAppBrowser";
 import { formatTokens } from "./SettingsPanel";
 import { IconClose, IconFolder, IconPause, IconPlay, IconSend } from "./icons";
 import { useLang } from "../lib/i18n";
+import { compressBase64Image, compressImageFile } from "../lib/imageCompression";
 
 const AGENT_OPTIONS = ["claude", "codex"];
 const MAX_SUGGESTIONS = 8;
@@ -55,7 +56,10 @@ export function ChatView({
   const [agentsBusy, setAgentsBusy] = useState(false);
   const [activeThreadId, setActiveThreadId] = useState<number | null>(null);
   const [browserUrl, setBrowserUrl] = useState<string | null>(null);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesViewportRef = useRef<HTMLDivElement>(null);
+  const nearBottomRef = useRef(true);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileQueryDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileQuerySeq = useRef(0);
@@ -133,7 +137,7 @@ export function ChatView({
     const unlistenUpdated = onMessageUpdated((payload) => {
       if (payload.session_id !== sessionId) return;
       setMessages((prev) =>
-        prev.map((m) => (m.id === payload.id ? { ...m, content: payload.content } : m)),
+        prev.map((m) => (m.id === payload.id ? { ...m, content: payload.content, model: payload.model ?? m.model } : m)),
       );
       setPhases((prev) => {
         const next = { ...prev };
@@ -178,8 +182,25 @@ export function ChatView({
   }, [sessionId]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (nearBottomRef.current) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  function handleMessagesScroll() {
+    const viewport = messagesViewportRef.current;
+    if (!viewport) return;
+    const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+    const nearBottom = distanceFromBottom < 96;
+    nearBottomRef.current = nearBottom;
+    setShowScrollToBottom(!nearBottom);
+  }
+
+  function scrollToBottom() {
+    const viewport = messagesViewportRef.current;
+    if (!viewport) return;
+    nearBottomRef.current = true;
+    setShowScrollToBottom(false);
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
+  }
 
   // Auto-grow the composer with content (up to a max height, then it
   // scrolls internally) instead of a fixed-size box — a plain `rows`
@@ -234,10 +255,11 @@ export function ChatView({
       const ext = path.split(".").pop()?.toLowerCase() ?? "";
       if (IMAGE_EXTENSIONS.has(ext)) {
         try {
-          const dataBase64 = await api.readFileAsBase64(path);
+          const raw = await api.readFileAsBase64(path);
+          const compressed = await compressBase64Image(raw, MIME_BY_EXTENSION[ext] ?? "image/png");
           setPendingAttachments((prev) => [
             ...prev,
-            { kind: "image", name: baseName(path), mimeType: MIME_BY_EXTENSION[ext] ?? "image/png", dataBase64, path: null },
+            { kind: "image", name: baseName(path), mimeType: compressed.mimeType, dataBase64: compressed.dataBase64, path: null },
           ]);
         } catch {
           // Skip files that fail to read rather than blocking the rest.
@@ -247,6 +269,20 @@ export function ChatView({
           ...prev,
           { kind: "file", name: baseName(path), mimeType: null, dataBase64: null, path },
         ]);
+      }
+    }
+  }
+
+  async function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
+    if (images.length === 0) return;
+    event.preventDefault();
+    for (const file of images) {
+      try {
+        const compressed = await compressImageFile(file);
+        setPendingAttachments((prev) => [...prev, { kind: "image", name: file.name || "pasted-image.jpg", mimeType: compressed.mimeType, dataBase64: compressed.dataBase64, path: null }]);
+      } catch {
+        // Ignore clipboard formats the browser cannot decode.
       }
     }
   }
@@ -267,6 +303,12 @@ export function ChatView({
     const message = await api.sendMessage(sessionId, content, attachments);
     setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
     refreshContextUsage();
+  }
+
+  function quickReply(agent: "claude" | "codex" | "orchestrator") {
+    const mention = agent === "orchestrator" ? "" : `@${agent} `;
+    setDraft((previous) => `${mention}${previous}`);
+    inputRef.current?.focus();
   }
 
   const agentMatches: Suggestion[] =
@@ -309,6 +351,12 @@ export function ChatView({
     }
   }
 
+  const isTurnRunning = Object.keys(phases).length > 0;
+
+  async function stopTurn() {
+    await api.cancelTurn(sessionId);
+  }
+
   const activeThreadMessage = messages.find((m) => m.id === activeThreadId);
 
   if (browserUrl) {
@@ -348,7 +396,7 @@ export function ChatView({
           </div>
         )}
       </div>
-      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-6 py-3">
+      <div ref={messagesViewportRef} onScroll={handleMessagesScroll} className="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-6 py-3">
         <div className="flex flex-col gap-3">
           {messages.length === 0 && (
             <div className="mt-16 text-center text-sm text-neutral-400">
@@ -364,11 +412,22 @@ export function ChatView({
               phase={phases[m.id]}
               onOpenThread={() => setActiveThreadId(m.id)}
               onOpenLink={setBrowserUrl}
+              onQuickReply={quickReply}
               fontSizeClass={fontSizeClass}
             />
           ))}
         </div>
         <div ref={bottomRef} />
+        {showScrollToBottom && (
+          <button
+            onClick={scrollToBottom}
+            className="absolute bottom-4 right-5 flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200 bg-white text-lg text-indigo-600 shadow-lg transition hover:-translate-y-0.5 hover:bg-indigo-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-indigo-300 dark:hover:bg-neutral-700"
+            title="Scroll to bottom"
+            aria-label="Scroll to bottom"
+          >
+            ↓
+          </button>
+        )}
       </div>
 
       <div className="relative shrink-0 border-t border-neutral-200/80 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-900">
@@ -434,15 +493,19 @@ export function ChatView({
               value={draft}
               placeholder={t("composer.placeholder")}
               onChange={(e) => handleDraftChange(e.target.value)}
+              onPaste={handlePaste}
               onKeyDown={handleKeyDown}
             />
             <button
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white transition hover:bg-indigo-700 disabled:opacity-40"
-              disabled={!draft.trim() && pendingAttachments.length === 0}
-              onClick={send}
-              aria-label={t("composer.send")}
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white transition disabled:opacity-40 ${
+                isTurnRunning ? "bg-neutral-700 hover:bg-neutral-800" : "bg-indigo-600 hover:bg-indigo-700"
+              }`}
+              disabled={!isTurnRunning && !draft.trim() && pendingAttachments.length === 0}
+              onClick={isTurnRunning ? stopTurn : send}
+              title={isTurnRunning ? t("composer.stopTooltip") : t("composer.send")}
+              aria-label={isTurnRunning ? t("composer.stopTooltip") : t("composer.send")}
             >
-              <IconSend className="h-4 w-4" />
+              {isTurnRunning ? <IconPause className="h-4 w-4" /> : <IconSend className="h-4 w-4" />}
             </button>
           </div>
         </div>

@@ -32,12 +32,13 @@ pub struct Message {
     pub message_type: String,
     pub content: String,
     pub attachments: Json<Vec<Attachment>>,
+    pub model: Option<String>,
 }
 
 #[tauri::command]
 pub async fn list_messages(state: State<'_, AppState>, session_id: Uuid) -> Result<Vec<Message>, String> {
     sqlx::query_as::<_, Message>(
-        "SELECT id, session_id, author_kind, message_type, content, attachments FROM messages
+        "SELECT id, session_id, author_kind, message_type, content, attachments, model FROM messages
          WHERE session_id = $1 ORDER BY id ASC",
     )
     .bind(session_id)
@@ -90,7 +91,7 @@ async fn insert_message(
     sqlx::query_as::<_, Message>(
         "INSERT INTO messages (session_id, author_kind, message_type, content, attachments)
          VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, session_id, author_kind, message_type, content, attachments",
+         RETURNING id, session_id, author_kind, message_type, content, attachments, model",
     )
     .bind(session_id)
     .bind(author_kind)
@@ -132,6 +133,17 @@ async fn finalize_message(app: &AppHandle, state: &AppState, session_id: Uuid, m
         "message-updated",
         serde_json::json!({ "id": message_id, "session_id": session_id, "content": content }),
     );
+}
+
+async fn set_message_model(app: &AppHandle, state: &AppState, session_id: Uuid, message_id: i64, model: Option<&str>) {
+    let _ = sqlx::query("UPDATE messages SET model = $1 WHERE id = $2")
+        .bind(model)
+        .bind(message_id)
+        .execute(&state.db)
+        .await;
+    let _ = app.emit("message-updated", serde_json::json!({
+        "id": message_id, "session_id": session_id, "content": "", "model": model
+    }));
 }
 
 /// Walk one hop of the @mention chain starting from `content` (either the
@@ -252,7 +264,7 @@ async fn run_agent_turn(
     .unwrap_or_default();
 
     let recent: Vec<Message> = sqlx::query_as(
-        "SELECT id, session_id, author_kind, message_type, content, attachments FROM messages
+        "SELECT id, session_id, author_kind, message_type, content, attachments, model FROM messages
          WHERE session_id = $1 ORDER BY id DESC LIMIT 10",
     )
     .bind(session_id)
@@ -295,6 +307,7 @@ async fn run_agent_turn(
         .await
         .map_err(|e| e.to_string())?;
     let placeholder_id = placeholder.id;
+    set_message_model(app, state, session_id, placeholder_id, model.as_deref()).await;
 
     let mut accumulated = String::new();
     // True right after a tool call, until the next text chunk — used to
@@ -302,9 +315,12 @@ async fn run_agent_turn(
     // text" don't visually run together as one unbroken sentence.
     let mut pending_round_break = false;
     let app_for_stream = app.clone();
+    let permission_handler = Some(crate::commands::agents::permission_handler(
+        app.clone(), state.approvals.clone(), session_id, kind,
+    ));
     let result = state
         .process_manager
-        .prompt(session_id, kind, blocks, |update| {
+        .prompt_with_permission(session_id, kind, blocks, |update| {
             match &update {
                 crate::acp::AgentUpdate::MessageChunk { text } => {
                     if pending_round_break && !accumulated.is_empty() {
@@ -331,7 +347,7 @@ async fn run_agent_turn(
                     "update": update,
                 }),
             );
-        })
+        }, permission_handler)
         .await;
 
     if let Err(e) = result {
@@ -414,7 +430,7 @@ async fn run_orchestrator_reply(
     // meaning it saw nothing of the actual chat. Recent raw messages fill
     // that gap, same as the @mention path already does in run_agent_turn.
     let recent: Vec<Message> = sqlx::query_as(
-        "SELECT id, session_id, author_kind, message_type, content, attachments FROM messages
+        "SELECT id, session_id, author_kind, message_type, content, attachments, model FROM messages
          WHERE session_id = $1 ORDER BY id DESC LIMIT 10",
     )
     .bind(session_id)
@@ -442,6 +458,8 @@ concisely as the room's default assistant]\n{user_content}"
         Err(_) => return,
     };
     let placeholder_id = placeholder.id;
+    let orchestrator_model = orchestrator.model.clone();
+    set_message_model(&app, &state, session_id, placeholder_id, orchestrator_model.as_deref()).await;
 
     let mut accumulated = String::new();
     let mut pending_round_break = false;

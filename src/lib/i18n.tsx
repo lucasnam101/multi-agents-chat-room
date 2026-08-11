@@ -15,10 +15,18 @@ const en = {
   "app.empty.noSessions": "No conversations yet. Click + to create one.",
   "app.empty.noRoom": "Create or select a room to start chatting.",
   "app.confirm.deleteSession": "Delete this conversation? All chat history will be lost.",
+  "app.confirm.deleteRoom": "Delete this room? All its conversations and history will be lost.",
 
   "room.new": "New room",
   "room.emptyLine1": "No rooms yet.",
   "room.emptyLine2": "Create a room to get started.",
+  "room.pin": "Pin room",
+  "room.unpin": "Unpin room",
+  "room.moveUp": "Move room up",
+  "room.moveDown": "Move room down",
+  "room.delete": "Delete room",
+
+  "approval.subtitle": "The agent is waiting for your choice before continuing.",
 
   "dialog.createRoom.title": "Create new room",
   "dialog.createRoom.subtitle": "A room is tied to one project folder on disk",
@@ -86,6 +94,7 @@ const en = {
   "composer.attachTooltip": "Attach image/file",
   "composer.placeholder": "Message... use @claude or @codex to assign work",
   "composer.send": "Send",
+  "composer.stopTooltip": "Stop the agent's reply",
 
   "author.you": "You",
   "author.system": "System",
@@ -120,10 +129,18 @@ const vi: typeof en = {
   "app.empty.noSessions": "Chưa có cuộc trò chuyện nào. Bấm + để tạo mới.",
   "app.empty.noRoom": "Tạo hoặc chọn một phòng để bắt đầu chat.",
   "app.confirm.deleteSession": "Xóa cuộc trò chuyện này? Toàn bộ lịch sử chat sẽ mất.",
+  "app.confirm.deleteRoom": "Xóa phòng này? Toàn bộ cuộc trò chuyện và lịch sử trong phòng sẽ mất.",
 
   "room.new": "Phòng mới",
   "room.emptyLine1": "Chưa có phòng nào.",
   "room.emptyLine2": "Tạo phòng để bắt đầu.",
+  "room.pin": "Ghim phòng",
+  "room.unpin": "Bỏ ghim phòng",
+  "room.moveUp": "Di chuyển phòng lên",
+  "room.moveDown": "Di chuyển phòng xuống",
+  "room.delete": "Xóa phòng",
+
+  "approval.subtitle": "Agent đang chờ bạn lựa chọn để tiếp tục.",
 
   "dialog.createRoom.title": "Tạo phòng mới",
   "dialog.createRoom.subtitle": "Một phòng gắn với một thư mục dự án trên máy",
@@ -191,6 +208,7 @@ const vi: typeof en = {
   "composer.attachTooltip": "Đính kèm ảnh/file",
   "composer.placeholder": "Nhắn tin... dùng @claude hoặc @codex để giao việc",
   "composer.send": "Gửi",
+  "composer.stopTooltip": "Dừng câu trả lời của agent",
 
   "author.you": "Bạn",
   "author.system": "Hệ thống",

@@ -11,11 +11,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use super::client::{AcpClient, SystemPromptTransport};
+use super::client::{AcpClient, PermissionHandler, SystemPromptTransport};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -55,6 +56,7 @@ pub struct RunningAgent {
     pub client: AcpClient,
     pub session_id: String,
     pub last_active: Instant,
+    pub cancel_requested: Arc<AtomicBool>,
 }
 
 pub const IDLE_TEARDOWN: std::time::Duration = std::time::Duration::from_secs(30 * 60);
@@ -121,6 +123,7 @@ impl ProcessManager {
                 client,
                 session_id: session.session_id,
                 last_active: Instant::now(),
+                cancel_requested: Arc::new(AtomicBool::new(false)),
             },
         );
         Ok(())
@@ -136,14 +139,36 @@ impl ProcessManager {
         blocks: Vec<serde_json::Value>,
         on_update: impl FnMut(super::client::AgentUpdate),
     ) -> Result<super::client::StopReason, super::client::AcpError> {
+        self.prompt_with_permission(session_id, kind, blocks, on_update, None).await
+    }
+
+    pub async fn prompt_with_permission(
+        &self,
+        session_id: Uuid,
+        kind: AgentKind,
+        blocks: Vec<serde_json::Value>,
+        on_update: impl FnMut(super::client::AgentUpdate),
+        permission_handler: Option<PermissionHandler>,
+    ) -> Result<super::client::StopReason, super::client::AcpError> {
         let mut agents = self.agents.lock().await;
         let key = (session_id, kind);
         let agent = agents
             .get_mut(&key)
             .ok_or_else(|| super::client::AcpError::Protocol("agent not running".into()))?;
         agent.last_active = Instant::now();
+        agent.cancel_requested.store(false, Ordering::Relaxed);
         let acp_session_id = agent.session_id.clone();
-        agent.client.session_prompt(&acp_session_id, blocks, on_update).await
+        let cancel = Arc::clone(&agent.cancel_requested);
+        agent.client.session_prompt_with_permission(&acp_session_id, blocks, on_update, Some(cancel), permission_handler).await
+    }
+
+    pub async fn cancel_for(&self, session_id: Uuid) {
+        let agents = self.agents.lock().await;
+        for ((sid, _), agent) in agents.iter() {
+            if *sid == session_id {
+                agent.cancel_requested.store(true, Ordering::Relaxed);
+            }
+        }
     }
 
     pub async fn is_active(&self, session_id: Uuid, kind: AgentKind) -> bool {

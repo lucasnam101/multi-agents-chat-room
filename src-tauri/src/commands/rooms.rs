@@ -10,6 +10,8 @@ pub struct Room {
     pub id: Uuid,
     pub name: String,
     pub folder_path: String,
+    pub pinned: bool,
+    pub sort_order: i32,
 }
 
 #[derive(Serialize, sqlx::FromRow)]
@@ -25,7 +27,7 @@ pub async fn create_room(
     folder_path: String,
 ) -> Result<Room, String> {
     sqlx::query_as::<_, Room>(
-        "INSERT INTO rooms (name, folder_path) VALUES ($1, $2) RETURNING id, name, folder_path",
+        "INSERT INTO rooms (name, folder_path) VALUES ($1, $2) RETURNING id, name, folder_path, pinned, sort_order",
     )
     .bind(name)
     .bind(folder_path)
@@ -36,10 +38,83 @@ pub async fn create_room(
 
 #[tauri::command]
 pub async fn list_rooms(state: State<'_, AppState>) -> Result<Vec<Room>, String> {
-    sqlx::query_as::<_, Room>("SELECT id, name, folder_path FROM rooms ORDER BY created_at DESC")
+    sqlx::query_as::<_, Room>("SELECT id, name, folder_path, pinned, sort_order FROM rooms ORDER BY pinned DESC, sort_order ASC, created_at DESC")
         .fetch_all(&state.db)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_room_pinned(
+    state: State<'_, AppState>,
+    room_id: Uuid,
+    pinned: bool,
+) -> Result<(), String> {
+    sqlx::query("UPDATE rooms SET pinned = $2 WHERE id = $1")
+        .bind(room_id)
+        .bind(pinned)
+        .execute(&state.db)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn reorder_rooms(
+    state: State<'_, AppState>,
+    room_ids: Vec<Uuid>,
+) -> Result<(), String> {
+    let mut tx = state.db.begin().await.map_err(|e| e.to_string())?;
+    for (index, room_id) in room_ids.iter().enumerate() {
+        sqlx::query("UPDATE rooms SET sort_order = $2 WHERE id = $1")
+            .bind(room_id)
+            .bind(index as i32)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    tx.commit().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn open_terminal(state: State<'_, AppState>, room_id: Uuid) -> Result<(), String> {
+    let folder = get_room_folder(&state.db, room_id).await.map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    {
+        std::process::Command::new("cmd.exe")
+            .args(["/K", "cd", "/d", &folder])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("x-terminal-emulator")
+            .current_dir(folder)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Deleting a room cascades to its sessions/messages/etc via `ON DELETE
+/// CASCADE`; this also shuts down any live ACP processes for those sessions
+/// so they don't linger in the background with nothing left to serve.
+#[tauri::command]
+pub async fn delete_room(state: State<'_, AppState>, room_id: Uuid) -> Result<(), String> {
+    let session_ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM sessions WHERE room_id = $1")
+        .bind(room_id)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    sqlx::query("DELETE FROM rooms WHERE id = $1")
+        .bind(room_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+    for session_id in session_ids {
+        state.process_manager.shutdown_for(session_id).await;
+    }
+    Ok(())
 }
 
 #[tauri::command]

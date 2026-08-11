@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use sqlx::PgPool;
 use tauri::Manager;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, oneshot};
+use std::collections::HashMap;
 
 use acp::ProcessManager;
 use orchestrator::compaction::OrchestratorSession;
@@ -18,6 +19,12 @@ pub struct AppState {
     pub db: PgPool,
     pub process_manager: Arc<ProcessManager>,
     pub orchestrator: Arc<Mutex<Option<OrchestratorSession>>>,
+    pub approvals: Arc<ApprovalStore>,
+}
+
+#[derive(Default)]
+pub struct ApprovalStore {
+    pub pending: Mutex<HashMap<String, oneshot::Sender<String>>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -51,6 +58,7 @@ pub fn run() {
                     db: pool,
                     process_manager,
                     orchestrator: Arc::new(Mutex::new(None)),
+                    approvals: Arc::new(ApprovalStore::default()),
                 });
             });
             Ok(())
@@ -60,6 +68,12 @@ pub fn run() {
             commands::rooms::list_rooms,
             commands::rooms::tag_agent,
             commands::rooms::room_agent_statuses,
+            commands::rooms::set_room_pinned,
+            commands::rooms::reorder_rooms,
+            commands::rooms::open_terminal,
+            commands::rooms::delete_room,
+            commands::agents::resolve_approval,
+            commands::agents::cancel_turn,
             commands::rooms::list_room_files,
             commands::chat::list_messages,
             commands::chat::send_message,

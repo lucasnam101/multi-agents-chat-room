@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio_util::codec::{FramedRead, LinesCodec};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::future::Future;
+use std::pin::Pin;
 
 const MAX_LINE_SIZE: usize = 10_000_000;
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
@@ -25,6 +29,8 @@ pub enum AcpError {
     AgentExited,
     #[error("request timed out")]
     Timeout,
+    #[error("agent turn cancelled")]
+    Cancelled,
     #[error("protocol error: {0}")]
     Protocol(String),
     #[error("agent reported error (code {code}): {message}")]
@@ -67,6 +73,8 @@ pub enum AgentUpdate {
     /// Anything else we don't specifically render.
     Other { update_type: String, raw: serde_json::Value },
 }
+
+pub type PermissionHandler = Arc<dyn Fn(serde_json::Value) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync>;
 
 /// A model the agent adapter reports as available, extracted from the
 /// `session/new` response (`models.availableModels` / `configOptions`).
@@ -259,7 +267,28 @@ impl AcpClient {
         &mut self,
         session_id: &str,
         blocks: Vec<serde_json::Value>,
+        on_update: impl FnMut(AgentUpdate),
+    ) -> Result<StopReason, AcpError> {
+        self.session_prompt_with_cancel(session_id, blocks, on_update, None).await
+    }
+
+    pub async fn session_prompt_with_cancel(
+        &mut self,
+        session_id: &str,
+        blocks: Vec<serde_json::Value>,
+        on_update: impl FnMut(AgentUpdate),
+        cancel: Option<Arc<AtomicBool>>,
+    ) -> Result<StopReason, AcpError> {
+        self.session_prompt_with_permission(session_id, blocks, on_update, cancel, None).await
+    }
+
+    pub async fn session_prompt_with_permission(
+        &mut self,
+        session_id: &str,
+        blocks: Vec<serde_json::Value>,
         mut on_update: impl FnMut(AgentUpdate),
+        cancel: Option<Arc<AtomicBool>>,
+        permission_handler: Option<PermissionHandler>,
     ) -> Result<StopReason, AcpError> {
         let id = self.next_id;
         self.next_id += 1;
@@ -276,7 +305,18 @@ impl AcpClient {
         self.write_ndjson(&msg).await?;
 
         loop {
-            let line = match self.reader.next().await {
+            let line = match cancel.as_ref() {
+                Some(flag) => tokio::select! {
+                    _ = async {
+                        while !flag.load(Ordering::Relaxed) {
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        }
+                    } => return Err(AcpError::Cancelled),
+                    line = self.reader.next() => line,
+                },
+                None => self.reader.next().await,
+            };
+            let line = match line {
                 None => return Err(AcpError::AgentExited),
                 Some(Err(e)) => return Err(AcpError::Protocol(e.to_string())),
                 Some(Ok(line)) => line,
@@ -316,7 +356,12 @@ impl AcpClient {
                         self.handle_session_update(&wire, &mut on_update);
                     }
                     "session/request_permission" => {
-                        self.auto_approve_permission(&wire).await?;
+                        if let Some(handler) = &permission_handler {
+                            let selected = handler(wire.clone()).await;
+                            self.respond_permission(&wire, selected.as_deref()).await?;
+                        } else {
+                            self.auto_approve_permission(&wire).await?;
+                        }
                     }
                     _ => {
                         if wire.get("id").is_some() {
@@ -367,7 +412,6 @@ impl AcpClient {
     }
 
     async fn auto_approve_permission(&mut self, wire: &serde_json::Value) -> Result<(), AcpError> {
-        let id = wire.get("id").cloned().unwrap_or(serde_json::Value::Null);
         let options = wire
             .pointer("/params/options")
             .and_then(|v| v.as_array())
@@ -394,10 +438,16 @@ impl AcpClient {
             })
             .unwrap_or_else(|| "allow_once".to_string());
 
+        self.respond_permission(wire, Some(&option_id)).await
+    }
+
+    async fn respond_permission(&mut self, wire: &serde_json::Value, option_id: Option<&str>) -> Result<(), AcpError> {
+        let id = wire.get("id").cloned().unwrap_or(serde_json::Value::Null);
+        let selected = option_id.unwrap_or("deny");
         let response = serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
-            "result": { "outcome": { "outcome": "selected", "optionId": option_id } }
+            "result": { "outcome": { "outcome": "selected", "optionId": selected } }
         });
         self.write_ndjson(&response).await
     }

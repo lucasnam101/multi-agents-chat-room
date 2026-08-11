@@ -115,3 +115,20 @@ export function IconPause(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+export function IconTrash(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Base {...props}>
+      <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6h16Z" />
+    </Base>
+  );
+}
+
+export function IconReply(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Base {...props}>
+      <path d="M9 8 4 12l5 4" />
+      <path d="M4 12h9a7 7 0 0 1 7 7v1" />
+    </Base>
+  );
+}

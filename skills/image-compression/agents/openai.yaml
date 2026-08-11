@@ -1,0 +1,4 @@
+interface:
+  display_name: "Image Compression"
+  short_description: "Compress images before agent upload"
+  default_prompt: "Use $image-compression to optimize images before sending them to an agent."
