@@ -29,10 +29,14 @@ pub async fn check_cli_status(cli: String) -> Result<bool, String> {
         "codex" => "codex.cmd",
         #[cfg(not(windows))]
         "codex" => "codex",
+        #[cfg(windows)]
+        "grok" => "grok.exe",
+        #[cfg(not(windows))]
+        "grok" => "grok",
         other => return Err(format!("unknown cli: {other}")),
     };
     let mut cmd = tokio::process::Command::new(binary);
-    cmd.arg("--version");
+    if cli == "grok" { cmd.arg("version"); } else { cmd.arg("--version"); }
     #[cfg(windows)]
     {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -81,12 +85,24 @@ pub async fn list_models(agent_kind: String) -> Result<Vec<ModelInfo>, String> {
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| ".".to_string());
 
-    let mut client = AcpClient::spawn(kind.command(), &[], &cwd)
+    let args = kind.args();
+    let mut client = AcpClient::spawn(kind.command(), &args, &cwd)
         .await
         .map_err(|e| e.to_string())?;
-    client.initialize().await.map_err(|e| e.to_string())?;
-    let session = client.session_new(&cwd, None).await.map_err(|e| e.to_string())?;
-    let models = crate::acp::client::extract_models(&session.raw);
+    let initialized = if kind == AgentKind::Grok {
+        client.initialize_grok().await.map_err(|e| e.to_string())?
+    } else {
+        client.initialize().await.map_err(|e| e.to_string())?
+    };
+
+    // Grok advertises models during initialize, so avoid creating a session
+    // just to populate the settings picker. Older adapters advertise them
+    // from session/new instead.
+    let mut models = crate::acp::client::extract_models(&initialized);
+    if models.is_empty() {
+        let session = client.session_new(&cwd, None).await.map_err(|e| e.to_string())?;
+        models = crate::acp::client::extract_models(&session.raw);
+    }
     client.shutdown().await;
     Ok(models)
 }
@@ -95,6 +111,7 @@ fn parse_kind(s: &str) -> Result<AgentKind, String> {
     match s {
         "claude" => Ok(AgentKind::Claude),
         "codex" => Ok(AgentKind::Codex),
+        "grok" => Ok(AgentKind::Grok),
         other => Err(format!("unknown agent kind: {other}")),
     }
 }
@@ -103,13 +120,14 @@ fn parse_kind(s: &str) -> Result<AgentKind, String> {
 pub struct ModelSettings {
     pub claude_model: Option<String>,
     pub codex_model: Option<String>,
+    pub grok_model: Option<String>,
     pub orchestrator_model: Option<String>,
 }
 
 #[tauri::command]
 pub async fn get_model_settings(state: State<'_, AppState>) -> Result<ModelSettings, String> {
-    let row: (Option<String>, Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT claude_model, codex_model, orchestrator_model FROM app_settings WHERE id = true",
+    let row: (Option<String>, Option<String>, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT claude_model, codex_model, grok_model, orchestrator_model FROM app_settings WHERE id = true",
     )
     .fetch_one(&state.db)
     .await
@@ -117,7 +135,8 @@ pub async fn get_model_settings(state: State<'_, AppState>) -> Result<ModelSetti
     Ok(ModelSettings {
         claude_model: row.0,
         codex_model: row.1,
-        orchestrator_model: row.2,
+        grok_model: row.2,
+        orchestrator_model: row.3,
     })
 }
 
@@ -132,6 +151,7 @@ pub async fn set_model_setting(
     let column = match scope.as_str() {
         "claude" => "claude_model",
         "codex" => "codex_model",
+        "grok" => "grok_model",
         "orchestrator" => "orchestrator_model",
         other => return Err(format!("unknown model scope: {other}")),
     };
@@ -176,7 +196,7 @@ pub async fn set_room_model(
     agent_kind: String,
     model: Option<String>,
 ) -> Result<(), String> {
-    if !["claude", "codex", "orchestrator"].contains(&agent_kind.as_str()) {
+    if !["claude", "codex", "grok", "orchestrator"].contains(&agent_kind.as_str()) {
         return Err("invalid room agent kind".into());
     }
     sqlx::query(
@@ -272,21 +292,55 @@ pub async fn ensure_session_agents(state: State<'_, AppState>, session_id: Uuid)
     .map_err(|e| e.to_string())?
     .unwrap_or_default();
 
-    for kind in [AgentKind::Claude, AgentKind::Codex] {
+    for kind in [AgentKind::Claude, AgentKind::Codex, AgentKind::Grok] {
         let model = resolve_model(&state.db, room_id, kind).await.unwrap_or(None);
         let summary = rolling_summary.clone();
-        let _ = state
+        let resume = get_acp_session(&state.db, session_id, kind).await;
+        if let Ok(acp_session_id) = state
             .process_manager
-            .ensure_running(session_id, kind, &cwd, model.as_deref(), move || {
+            .ensure_running(session_id, kind, &cwd, model.as_deref(), resume, move || {
                 if summary.is_empty() {
                     crate::system_context::SYSTEM_CONTEXT.to_string()
                 } else {
                     format!("{}\n\n[Project summary so far]\n{summary}", crate::system_context::SYSTEM_CONTEXT)
                 }
             })
-            .await;
+            .await
+        {
+            save_acp_session(&state.db, session_id, kind, &acp_session_id).await;
+        }
     }
     Ok(())
+}
+
+/// The ACP session id (the adapter's own native conversation id) last
+/// associated with (session_id, kind), if any — used to attempt a
+/// `session/load` resume instead of always starting fresh. See
+/// `agent_acp_sessions` (migration 0012).
+pub async fn get_acp_session(pool: &sqlx::PgPool, session_id: Uuid, kind: AgentKind) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT acp_session_id FROM agent_acp_sessions WHERE session_id = $1 AND agent_kind = $2",
+    )
+    .bind(session_id)
+    .bind(kind.as_str())
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+}
+
+pub async fn save_acp_session(pool: &sqlx::PgPool, session_id: Uuid, kind: AgentKind, acp_session_id: &str) {
+    let _ = sqlx::query(
+        "INSERT INTO agent_acp_sessions (session_id, agent_kind, acp_session_id, updated_at)
+         VALUES ($1, $2, $3, now())
+         ON CONFLICT (session_id, agent_kind)
+         DO UPDATE SET acp_session_id = EXCLUDED.acp_session_id, updated_at = now()",
+    )
+    .bind(session_id)
+    .bind(kind.as_str())
+    .bind(acp_session_id)
+    .execute(pool)
+    .await;
 }
 
 /// Kill both agent processes for a session — the "pause" side of the
@@ -352,14 +406,16 @@ pub async fn resolve_approval(
 pub struct SessionAgentStatus {
     pub agent_kind: String,
     pub is_active: bool,
+    pub is_busy: bool,
 }
 
 #[tauri::command]
 pub async fn session_agent_statuses(state: State<'_, AppState>, session_id: Uuid) -> Result<Vec<SessionAgentStatus>, String> {
     let mut statuses = Vec::new();
-    for kind in [AgentKind::Claude, AgentKind::Codex] {
+    for kind in [AgentKind::Claude, AgentKind::Codex, AgentKind::Grok] {
         let is_active = state.process_manager.is_active(session_id, kind).await;
-        statuses.push(SessionAgentStatus { agent_kind: kind.as_str().to_string(), is_active });
+        let is_busy = state.process_manager.is_busy(session_id, kind).await;
+        statuses.push(SessionAgentStatus { agent_kind: kind.as_str().to_string(), is_active, is_busy });
     }
     Ok(statuses)
 }
@@ -396,6 +452,7 @@ pub async fn resolve_model(
     let column = match kind {
         AgentKind::Claude => "claude_model",
         AgentKind::Codex => "codex_model",
+        AgentKind::Grok => "grok_model",
     };
     let query = format!("SELECT {column} FROM app_settings WHERE id = true");
     sqlx::query_scalar(&query).fetch_one(pool).await

@@ -97,6 +97,7 @@ function App() {
     const room = await api.createRoom(name, folderPath);
     await api.tagAgent(room.id, "claude");
     await api.tagAgent(room.id, "codex");
+    await api.tagAgent(room.id, "grok");
     setShowCreate(false);
     await refreshRooms();
     setActiveRoomId(room.id);

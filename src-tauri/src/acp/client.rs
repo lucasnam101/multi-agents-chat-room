@@ -131,22 +131,32 @@ pub enum SystemPromptTransport<'a> {
     ClaudeMeta(&'a str),
 }
 
-/// Extract the list of models the adapter advertised in a `session/new`
-/// response, if any (unstable `models.availableModels` field).
-pub fn extract_models(session_new_raw: &serde_json::Value) -> Vec<ModelInfo> {
-    session_new_raw
-        .pointer("/models/availableModels")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
+/// Extract the list of models advertised by an adapter. Claude/Codex expose
+/// this under `models.availableModels`; current Grok Build exposes the same
+/// list under `_meta.modelState.availableModels` during `initialize`.
+pub fn extract_models(raw: &serde_json::Value) -> Vec<ModelInfo> {
+    let arrays = [
+        raw.pointer("/models/availableModels"),
+        raw.pointer("/_meta/modelState/availableModels"),
+    ];
+
+    for value in arrays.into_iter().flatten() {
+        if let Some(arr) = value.as_array() {
+            let models: Vec<ModelInfo> = arr
+                .iter()
                 .filter_map(|m| {
                     let model_id = m.get("modelId")?.as_str()?.to_string();
                     let name = m.get("name").and_then(|n| n.as_str()).map(|s| s.to_string());
                     Some(ModelInfo { model_id, name })
                 })
-                .collect()
-        })
-        .unwrap_or_default()
+                .collect();
+            if !models.is_empty() {
+                return models;
+            }
+        }
+    }
+
+    Vec::new()
 }
 
 pub struct AcpClient {
@@ -212,6 +222,45 @@ impl AcpClient {
         self.send_request("initialize", params).await
     }
 
+    /// Grok Build's ACP adapter currently speaks protocol v1 and requires an
+    /// explicit authenticate request before session/new. Claude/Codex use the
+    /// v2 initialize flow above, so keep this handshake isolated.
+    pub async fn initialize_grok(&mut self) -> Result<serde_json::Value, AcpError> {
+        let init = self.send_request("initialize", serde_json::json!({
+            "protocolVersion": 1,
+            "clientCapabilities": {
+                "fs": { "readTextFile": true, "writeTextFile": true },
+                "terminal": true
+            },
+            "clientInfo": { "name": "agentchat", "version": env!("CARGO_PKG_VERSION") }
+        })).await?;
+
+        let auth_methods = init.get("authMethods").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let has = |id: &str| auth_methods.iter().any(|m| m.get("id").and_then(|v| v.as_str()) == Some(id));
+        let method = if std::env::var("XAI_API_KEY").is_ok() && has("xai.api_key") {
+            Some("xai.api_key")
+        } else if has("cached_token") {
+            Some("cached_token")
+        } else {
+            // Current Grok Build versions expose the logged-in browser/device
+            // flow as `grok.com`; older versions exposed `cached_token`.
+            // Select the adapter's first advertised method as a compatible
+            // fallback instead of hard-coding one generation.
+            auth_methods.first()
+                .and_then(|m| m.get("id"))
+                .and_then(|v| v.as_str())
+        };
+        if let Some(method_id) = method {
+            self.send_request("authenticate", serde_json::json!({
+                "methodId": method_id,
+                "_meta": { "headless": true }
+            })).await?;
+        } else if !auth_methods.is_empty() {
+            return Err(AcpError::Protocol("Grok CLI is not authenticated; run `grok login` first".into()));
+        }
+        Ok(init)
+    }
+
     pub async fn session_new(
         &mut self,
         cwd: &str,
@@ -240,6 +289,25 @@ impl AcpClient {
             session_id,
             raw: result,
         })
+    }
+
+    /// Resume a previously-created session (`session/load`) instead of
+    /// starting a fresh one — only meaningful if the adapter advertised the
+    /// `loadSession` capability at `initialize`; callers should treat any
+    /// error here as "this adapter/session can't be resumed" and fall back
+    /// to `session_new` rather than aborting the turn. The agent may stream
+    /// the replayed history back as `session/update` notifications while
+    /// this is in flight; those are intentionally dropped here (same as any
+    /// other unsolicited notification arriving during a plain request) since
+    /// the app already has the full history in its own database.
+    pub async fn session_load(&mut self, session_id: &str, cwd: &str) -> Result<(), AcpError> {
+        let params = serde_json::json!({
+            "sessionId": session_id,
+            "cwd": cwd,
+            "mcpServers": [],
+        });
+        self.send_request("session/load", params).await?;
+        Ok(())
     }
 
     /// Send `session/set_model` (unstable ACP path) to switch the session's

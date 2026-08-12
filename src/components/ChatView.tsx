@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { AgentUpdate, Attachment, ContextUsage, Message } from "../lib/tauriApi";
 import { api, onAgentUpdate, onMessageInserted, onMessageUpdated } from "../lib/tauriApi";
@@ -6,14 +6,14 @@ import { MessageBubble, type TurnPhase } from "./MessageBubble";
 import { ActivityThread } from "./ActivityThread";
 import { InAppBrowser } from "./InAppBrowser";
 import { formatTokens } from "./SettingsPanel";
-import { IconClose, IconFolder, IconPause, IconPlay, IconSend } from "./icons";
+import { IconArrowDown, IconClose, IconFolder, IconPause, IconPlay, IconSend } from "./icons";
 import { useLang } from "../lib/i18n";
 import { compressBase64Image, compressImageFile } from "../lib/imageCompression";
 
-const AGENT_OPTIONS = ["claude", "codex"];
+const AGENT_OPTIONS = ["claude", "codex", "grok"];
 const MAX_SUGGESTIONS = 8;
 const FILE_QUERY_DEBOUNCE_MS = 150;
-const AGENT_AUTHOR_KINDS = new Set(["claude", "codex", "orchestrator"]);
+const AGENT_AUTHOR_KINDS = new Set(["claude", "codex", "grok", "orchestrator"]);
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]);
 const MIME_BY_EXTENSION: Record<string, string> = {
   png: "image/png",
@@ -67,6 +67,11 @@ export function ChatView({
   // mirrors the same bookkeeping the backend does when building the
   // persisted content, so live streaming reads the same way a reload would.
   const pendingRoundBreak = useRef<Record<number, boolean>>({});
+  const messagesRef = useRef<Message[]>([]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   async function refreshContextUsage() {
     try {
@@ -80,6 +85,17 @@ export function ChatView({
     try {
       const statuses = await api.sessionAgentStatuses(sessionId);
       setAgentsRunning(statuses.some((s) => s.is_active));
+      const busyKinds = new Set(statuses.filter((s) => s.is_busy).map((s) => s.agent_kind));
+      if (busyKinds.size > 0) {
+        setPhases((previous) => {
+          const next = { ...previous };
+          for (const kind of busyKinds) {
+            const message = [...messagesRef.current].reverse().find((item) => item.author_kind === kind);
+            if (message && next[message.id] === undefined) next[message.id] = message.content ? "streaming" : "thinking";
+          }
+          return next;
+        });
+      }
     } catch {
       setAgentsRunning(false);
     }
@@ -100,11 +116,31 @@ export function ChatView({
   }
 
   async function refresh() {
-    setMessages(await api.listMessages(sessionId));
-    setPhases({});
+    const nextMessages = await api.listMessages(sessionId);
+    setMessages(nextMessages);
+    setPhases(Object.fromEntries(nextMessages.filter((message) => AGENT_AUTHOR_KINDS.has(message.author_kind) && message.content === "").map((message) => [message.id, "thinking" as TurnPhase])));
     setToolEvents({});
     setActiveThreadId(null);
     setBrowserUrl(null);
+  }
+
+  async function refreshMessagesFromDb() {
+    try {
+      const latest = await api.listMessages(sessionId);
+      setMessages((previous) => {
+        const localById = new Map(previous.map((message) => [message.id, message]));
+        return latest.map((message) => {
+          const local = localById.get(message.id);
+          // A live event can arrive just before the persistence worker; never
+          // replace that newer local stream with an older DB snapshot.
+          return local && local.content.length > message.content.length
+            ? { ...message, content: local.content, model: local.model ?? message.model }
+            : message;
+        });
+      });
+    } catch {
+      // The live event stream remains the source of truth if a poll fails.
+    }
   }
 
   useEffect(() => {
@@ -114,7 +150,8 @@ export function ChatView({
     const interval = setInterval(() => {
       refreshContextUsage();
       refreshAgentsRunning();
-    }, 15000);
+      refreshMessagesFromDb();
+    }, 2000);
 
     // A newly-inserted row (user message, or an agent's placeholder) becomes
     // visible immediately — this is also what makes streaming possible for
@@ -305,11 +342,18 @@ export function ChatView({
     refreshContextUsage();
   }
 
-  function quickReply(agent: "claude" | "codex" | "orchestrator") {
+  // Stable identities (useCallback) so MessageBubble's React.memo actually
+  // takes effect — an inline arrow recreated on every ChatView render (e.g.
+  // every keystroke updating `draft`) would defeat memoization just as
+  // surely as not memoizing at all, forcing every message bubble in the
+  // conversation to re-render (and re-parse its markdown) on every keystroke.
+  const quickReply = useCallback((agent: "claude" | "codex" | "grok" | "orchestrator") => {
     const mention = agent === "orchestrator" ? "" : `@${agent} `;
     setDraft((previous) => `${mention}${previous}`);
     inputRef.current?.focus();
-  }
+  }, []);
+
+  const openThread = useCallback((messageId: number) => setActiveThreadId(messageId), []);
 
   const agentMatches: Suggestion[] =
     mentionQuery !== null
@@ -396,12 +440,14 @@ export function ChatView({
           </div>
         )}
       </div>
-      <div ref={messagesViewportRef} onScroll={handleMessagesScroll} className="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-6 py-3">
-        <div className="flex flex-col gap-3">
+      <div className="relative min-h-0 flex-1">
+        <div ref={messagesViewportRef} onScroll={handleMessagesScroll} className="h-full overflow-x-hidden overflow-y-auto px-6 py-3">
+          <div className="flex flex-col gap-3">
           {messages.length === 0 && (
             <div className="mt-16 text-center text-sm text-neutral-400">
               {t("chat.emptyLine1")} <span className="font-mono">@claude</span> {t("chat.emptyOr")}{" "}
-              <span className="font-mono">@codex</span> {t("chat.emptySuffix")}
+            <span className="font-mono">@codex</span> {t("chat.emptyOr")} {" "}
+            <span className="font-mono">@grok</span> {t("chat.emptySuffix")}
             </div>
           )}
           {messages.map((m) => (
@@ -410,21 +456,22 @@ export function ChatView({
               message={m}
               toolEvents={toolEvents[m.id]}
               phase={phases[m.id]}
-              onOpenThread={() => setActiveThreadId(m.id)}
+              onOpenThread={openThread}
               onOpenLink={setBrowserUrl}
               onQuickReply={quickReply}
               fontSizeClass={fontSizeClass}
             />
           ))}
+          </div>
+          <div ref={bottomRef} />
         </div>
-        <div ref={bottomRef} />
         {showScrollToBottom && (
           <button
             onClick={scrollToBottom}
-            className="absolute bottom-4 right-5 flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200 bg-white text-lg text-indigo-600 shadow-lg transition hover:-translate-y-0.5 hover:bg-indigo-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-indigo-300 dark:hover:bg-neutral-700"
+            className="absolute bottom-4 right-5 z-20 flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200 bg-white text-[0px] text-indigo-600 shadow-lg transition hover:-translate-y-0.5 hover:bg-indigo-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-indigo-300 dark:hover:bg-neutral-700"
             title="Scroll to bottom"
             aria-label="Scroll to bottom"
-          >
+          ><IconArrowDown className="h-4 w-4" aria-hidden="true" />
             ↓
           </button>
         )}

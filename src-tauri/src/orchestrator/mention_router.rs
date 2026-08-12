@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 
 fn mention_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(?i)\B@(claude|codex)\b").unwrap())
+    RE.get_or_init(|| Regex::new(r"(?i)\B@(claude|codex|grok)\b").unwrap())
 }
 
 /// Distinct agent kinds mentioned in `content`, in first-occurrence order.
@@ -16,6 +16,7 @@ pub fn find_mentions(content: &str) -> Vec<AgentKind> {
         let kind = match cap[1].to_ascii_lowercase().as_str() {
             "claude" => AgentKind::Claude,
             "codex" => AgentKind::Codex,
+            "grok" => AgentKind::Grok,
             _ => continue,
         };
         if !seen.contains(&kind) {

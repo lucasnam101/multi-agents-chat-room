@@ -10,8 +10,9 @@ export interface Room {
 }
 
 export interface RoomAgentStatus {
-  agent_kind: "claude" | "codex";
+  agent_kind: "claude" | "codex" | "grok";
   is_active: boolean;
+  is_busy: boolean;
 }
 
 export interface Session {
@@ -31,7 +32,7 @@ export interface Attachment {
 export interface Message {
   id: number;
   session_id: string;
-  author_kind: "user" | "claude" | "codex" | "system" | "orchestrator";
+  author_kind: "user" | "claude" | "codex" | "grok" | "system" | "orchestrator";
   message_type: "chat" | "tool_call" | "tool_result" | "system_note";
   content: string;
   attachments: Attachment[];
@@ -47,7 +48,7 @@ export type AgentUpdate =
 export interface AgentUpdateEvent {
   session_id: string;
   message_id: number;
-  agent_kind: "claude" | "codex" | "orchestrator";
+  agent_kind: "claude" | "codex" | "grok" | "orchestrator";
   update: AgentUpdate;
 }
 
@@ -59,6 +60,7 @@ export interface ModelInfo {
 export interface ModelSettings {
   claude_model: string | null;
   codex_model: string | null;
+  grok_model: string | null;
   orchestrator_model: string | null;
 }
 
@@ -71,7 +73,7 @@ export const api = {
   createRoom: (name: string, folderPath: string) =>
     invoke<Room>("create_room", { name, folderPath }),
   listRooms: () => invoke<Room[]>("list_rooms"),
-  tagAgent: (roomId: string, agentKind: "claude" | "codex") =>
+  tagAgent: (roomId: string, agentKind: "claude" | "codex" | "grok") =>
     invoke<void>("tag_agent", { roomId, agentKind }),
   roomAgentStatuses: (roomId: string) =>
     invoke<RoomAgentStatus[]>("room_agent_statuses", { roomId }),
@@ -99,18 +101,18 @@ export const api = {
     invoke<string[]>("list_room_files", { roomId, query }),
   readFileAsBase64: (path: string) => invoke<string>("read_file_as_base64", { path }),
 
-  checkCliStatus: (cli: "claude" | "codex") => invoke<boolean>("check_cli_status", { cli }),
+  checkCliStatus: (cli: "claude" | "codex" | "grok") => invoke<boolean>("check_cli_status", { cli }),
   getOrchestratorKind: () => invoke<"claude" | "codex">("get_orchestrator_kind"),
   setOrchestratorKind: (kind: "claude" | "codex") =>
     invoke<void>("set_orchestrator_kind", { kind }),
 
-  listModels: (agentKind: "claude" | "codex") => invoke<ModelInfo[]>("list_models", { agentKind }),
+  listModels: (agentKind: "claude" | "codex" | "grok") => invoke<ModelInfo[]>("list_models", { agentKind }),
   getModelSettings: () => invoke<ModelSettings>("get_model_settings"),
-  setModelSetting: (scope: "claude" | "codex" | "orchestrator", model: string | null) =>
+  setModelSetting: (scope: "claude" | "codex" | "grok" | "orchestrator", model: string | null) =>
     invoke<void>("set_model_setting", { scope, model }),
-  getRoomModel: (roomId: string, agentKind: "claude" | "codex" | "orchestrator") =>
+  getRoomModel: (roomId: string, agentKind: "claude" | "codex" | "grok" | "orchestrator") =>
     invoke<string | null>("get_room_model", { roomId, agentKind }),
-  setRoomModel: (roomId: string, agentKind: "claude" | "codex" | "orchestrator", model: string | null) =>
+  setRoomModel: (roomId: string, agentKind: "claude" | "codex" | "grok" | "orchestrator", model: string | null) =>
     invoke<void>("set_room_model", { roomId, agentKind, model }),
 
   getContextBudget: () => invoke<number>("get_context_budget"),
@@ -153,7 +155,7 @@ export function onSessionRenamed(callback: (payload: SessionRenamedEvent) => voi
 export interface ApprovalRequest {
   request_id: string;
   session_id: string;
-  agent_kind: "claude" | "codex";
+  agent_kind: "claude" | "codex" | "grok";
   title: string;
   options: Array<{ optionId: string; name?: string; description?: string }>;
 }

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 use tauri::{AppHandle, Emitter, State};
+use tokio::sync::mpsc::{self, UnboundedSender};
 use uuid::Uuid;
 
 use crate::acp::{content_blocks, AgentKind};
@@ -22,6 +23,29 @@ pub struct Attachment {
     pub mime_type: Option<String>,
     pub data_base64: Option<String>,
     pub path: Option<String>,
+}
+
+/// Persist streamed text in the background so a conversation keeps its
+/// progress even when its ChatView is unmounted while another conversation is
+/// open. Coalesce queued chunks to avoid one database write per token.
+fn spawn_message_persister(
+    pool: sqlx::PgPool,
+    message_id: i64,
+) -> (UnboundedSender<String>, tokio::task::JoinHandle<()>) {
+    let (sender, mut receiver) = mpsc::unbounded_channel::<String>();
+    let task = tokio::spawn(async move {
+        while let Some(mut content) = receiver.recv().await {
+            while let Ok(next) = receiver.try_recv() {
+                content = next;
+            }
+            let _ = sqlx::query("UPDATE messages SET content = $1 WHERE id = $2")
+                .bind(&content)
+                .bind(message_id)
+                .execute(&pool)
+                .await;
+        }
+    });
+    (sender, task)
 }
 
 #[derive(Serialize, Clone, sqlx::FromRow)]
@@ -281,10 +305,11 @@ async fn run_agent_turn(
     let model = crate::commands::agents::resolve_model(&state.db, room_id, kind)
         .await
         .map_err(|e| e.to_string())?;
+    let resume = crate::commands::agents::get_acp_session(&state.db, session_id, kind).await;
 
-    state
+    let acp_session_id = state
         .process_manager
-        .ensure_running(session_id, kind, &cwd, model.as_deref(), || {
+        .ensure_running(session_id, kind, &cwd, model.as_deref(), resume, || {
             if rolling_summary.is_empty() {
                 SYSTEM_CONTEXT.to_string()
             } else {
@@ -293,6 +318,7 @@ async fn run_agent_turn(
         })
         .await
         .map_err(|e| e.to_string())?;
+    crate::commands::agents::save_acp_session(&state.db, session_id, kind, &acp_session_id).await;
 
     let full_prompt = format!(
         "[Project summary so far]\n{rolling_summary}\n\n[Recent messages]\n{recent_text}\n\n[Current instruction]\n{triggering_content}"
@@ -318,6 +344,8 @@ async fn run_agent_turn(
     let permission_handler = Some(crate::commands::agents::permission_handler(
         app.clone(), state.approvals.clone(), session_id, kind,
     ));
+    let (persist_tx, persist_task) = spawn_message_persister(state.db.clone(), placeholder_id);
+    let persist_tx_for_stream = persist_tx.clone();
     let result = state
         .process_manager
         .prompt_with_permission(session_id, kind, blocks, |update| {
@@ -332,6 +360,7 @@ async fn run_agent_turn(
                     }
                     pending_round_break = false;
                     accumulated.push_str(text);
+                    let _ = persist_tx_for_stream.send(accumulated.clone());
                 }
                 crate::acp::AgentUpdate::ToolCall { .. } | crate::acp::AgentUpdate::ToolCallUpdate { .. } => {
                     pending_round_break = true;
@@ -349,6 +378,10 @@ async fn run_agent_turn(
             );
         }, permission_handler)
         .await;
+
+    drop(persist_tx_for_stream);
+    drop(persist_tx);
+    let _ = persist_task.await;
 
     if let Err(e) = result {
         accumulated = format!("⚠️ Lỗi: {e}");
@@ -460,6 +493,8 @@ concisely as the room's default assistant]\n{user_content}"
     let placeholder_id = placeholder.id;
     let orchestrator_model = orchestrator.model.clone();
     set_message_model(&app, &state, session_id, placeholder_id, orchestrator_model.as_deref()).await;
+    let (persist_tx, persist_task) = spawn_message_persister(state.db.clone(), placeholder_id);
+    let persist_tx_for_stream = persist_tx.clone();
 
     let mut accumulated = String::new();
     let mut pending_round_break = false;
@@ -478,6 +513,7 @@ concisely as the room's default assistant]\n{user_content}"
                     }
                     pending_round_break = false;
                     accumulated.push_str(text);
+                    let _ = persist_tx_for_stream.send(accumulated.clone());
                 }
                 crate::acp::AgentUpdate::ToolCall { .. } | crate::acp::AgentUpdate::ToolCallUpdate { .. } => {
                     pending_round_break = true;
@@ -495,6 +531,10 @@ concisely as the room's default assistant]\n{user_content}"
             );
         })
         .await;
+
+    drop(persist_tx_for_stream);
+    drop(persist_tx);
+    let _ = persist_task.await;
 
     if let Err(e) = result {
         accumulated = format!("⚠️ Lỗi orchestrator: {e}");

@@ -68,6 +68,14 @@ export function IconSend(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function IconArrowDown(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Base {...props}>
+      <path d="M12 4v15M6 13l6 6 6-6" />
+    </Base>
+  );
+}
+
 export function IconClose(props: SVGProps<SVGSVGElement>) {
   return (
     <Base {...props}>

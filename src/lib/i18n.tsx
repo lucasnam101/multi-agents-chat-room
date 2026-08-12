@@ -72,6 +72,7 @@ const en = {
   "roomSettings.subtitle": "Override the model for this room — leave blank to use the general setting",
   "roomSettings.claudeModelLabel": "Claude model for this room",
   "roomSettings.codexModelLabel": "Codex model for this room",
+  "roomSettings.grokModelLabel": "Grok model for this room",
   "roomSettings.orchestratorModelLabel": "Orchestrator model for this room",
   "roomSettings.orchestratorNote": "Currently using the general orchestrator CLI: {kind} (change it in General settings).",
 
@@ -92,7 +93,7 @@ const en = {
   "context.label": "Context",
   "context.tokens": "tokens",
   "composer.attachTooltip": "Attach image/file",
-  "composer.placeholder": "Message... use @claude or @codex to assign work",
+  "composer.placeholder": "Message... use @claude, @codex, or @grok to assign work",
   "composer.send": "Send",
   "composer.stopTooltip": "Stop the agent's reply",
 
@@ -186,6 +187,7 @@ const vi: typeof en = {
   "roomSettings.subtitle": "Ghi đè model riêng cho phòng này — để trống để dùng cài đặt chung",
   "roomSettings.claudeModelLabel": "Model Claude cho phòng này",
   "roomSettings.codexModelLabel": "Model Codex cho phòng này",
+  "roomSettings.grokModelLabel": "Model Grok cho phòng này",
   "roomSettings.orchestratorModelLabel": "Model điều phối (orchestrator) cho phòng này",
   "roomSettings.orchestratorNote": "Đang dùng CLI điều phối chung: {kind} (đổi ở Cài đặt chung).",
 
@@ -206,7 +208,7 @@ const vi: typeof en = {
   "context.label": "Ngữ cảnh",
   "context.tokens": "token",
   "composer.attachTooltip": "Đính kèm ảnh/file",
-  "composer.placeholder": "Nhắn tin... dùng @claude hoặc @codex để giao việc",
+  "composer.placeholder": "Nhắn tin... dùng @claude, @codex hoặc @grok để giao việc",
   "composer.send": "Gửi",
   "composer.stopTooltip": "Dừng câu trả lời của agent",
 

@@ -18,6 +18,7 @@ pub struct Room {
 pub struct RoomAgentStatus {
     pub agent_kind: String,
     pub is_active: bool,
+    pub is_busy: bool,
 }
 
 #[tauri::command]
@@ -160,18 +161,21 @@ pub async fn room_agent_statuses(
         let kind = match kind_str.as_str() {
             "claude" => crate::acp::AgentKind::Claude,
             "codex" => crate::acp::AgentKind::Codex,
+            "grok" => crate::acp::AgentKind::Grok,
             _ => continue,
         };
         let mut is_active = false;
+        let mut is_busy = false;
         for session_id in &session_ids {
             if state.process_manager.is_active(*session_id, kind).await {
                 is_active = true;
-                break;
             }
+            if state.process_manager.is_busy(*session_id, kind).await { is_busy = true; }
         }
         statuses.push(RoomAgentStatus {
             agent_kind: kind_str,
             is_active,
+            is_busy,
         });
     }
     Ok(statuses)

@@ -23,6 +23,7 @@ use super::client::{AcpClient, PermissionHandler, SystemPromptTransport};
 pub enum AgentKind {
     Claude,
     Codex,
+    Grok,
 }
 
 impl AgentKind {
@@ -30,6 +31,7 @@ impl AgentKind {
         match self {
             AgentKind::Claude => "claude",
             AgentKind::Codex => "codex",
+            AgentKind::Grok => "grok",
         }
     }
 
@@ -48,6 +50,16 @@ impl AgentKind {
             AgentKind::Codex => "codex-acp.cmd",
             #[cfg(not(windows))]
             AgentKind::Codex => "codex-acp",
+            AgentKind::Grok => "grok",
+        }
+    }
+
+    pub fn args(&self) -> Vec<String> {
+        match self {
+            // `--no-auto-update` is a global flag and must precede the
+            // `agent` subcommand (the CLI rejects it after `stdio`).
+            AgentKind::Grok => vec!["--no-auto-update".into(), "agent".into(), "stdio".into()],
+            _ => Vec::new(),
         }
     }
 }
@@ -57,6 +69,7 @@ pub struct RunningAgent {
     pub session_id: String,
     pub last_active: Instant,
     pub cancel_requested: Arc<AtomicBool>,
+    pub is_prompting: Arc<AtomicBool>,
 }
 
 pub const IDLE_TEARDOWN: std::time::Duration = std::time::Duration::from_secs(30 * 60);
@@ -77,14 +90,19 @@ impl ProcessManager {
     /// Get the running agent for (session, kind), spawning + initializing it
     /// (primed with `priming_prompt` as the first turn context) if it isn't
     /// already alive.
+    /// Returns the ACP session id now backing (session_id, kind) — either
+    /// the one that was already running, a resumed one (if `resume` was
+    /// given and the adapter honored `session/load`), or a freshly created
+    /// one — so callers can persist it for a future resume attempt.
     pub async fn ensure_running<F>(
         &self,
         session_id: Uuid,
         kind: AgentKind,
         cwd: &str,
         model: Option<&str>,
+        resume: Option<String>,
         build_priming_prompt: F,
-    ) -> Result<(), super::client::AcpError>
+    ) -> Result<String, super::client::AcpError>
     where
         F: FnOnce() -> String,
     {
@@ -92,41 +110,60 @@ impl ProcessManager {
         let key = (session_id, kind);
         if let Some(agent) = agents.get_mut(&key) {
             agent.last_active = Instant::now();
-            return Ok(());
+            return Ok(agent.session_id.clone());
         }
 
-        let mut client = AcpClient::spawn(kind.command(), &[], cwd).await?;
-        client.initialize().await?;
-        let system_prompt = build_priming_prompt();
-        let transport = if system_prompt.is_empty() {
-            None
-        } else if kind == AgentKind::Claude {
-            // claude-agent-acp silently ignores a bare `systemPrompt` field —
-            // it only reads `_meta.systemPrompt.append`. Sending the wrong
-            // shape doesn't error, it just means the agent never sees the
-            // room's shared context (or the @mention handoff instructions)
-            // at all. See `SystemPromptTransport` for the full story.
-            Some(SystemPromptTransport::ClaudeMeta(&system_prompt))
+        let mut client = AcpClient::spawn(kind.command(), &kind.args(), cwd).await?;
+        if kind == AgentKind::Grok {
+            client.initialize_grok().await?;
         } else {
-            Some(SystemPromptTransport::Field(&system_prompt))
+            client.initialize().await?;
+        }
+
+        // Prefer resuming the agent's own native session over starting a
+        // fresh one — only meaningful continuity for context beyond what
+        // the app's own "[Recent messages]" text replay can offer. Adapters
+        // that don't support `loadSession` (or a resume id that's since
+        // expired/been deleted on the CLI side) fall straight through to a
+        // normal `session_new`, so this is never a hard failure mode.
+        let acp_session_id = match resume {
+            Some(resume_id) if client.session_load(&resume_id, cwd).await.is_ok() => resume_id,
+            _ => {
+                let system_prompt = build_priming_prompt();
+                let transport = if system_prompt.is_empty() {
+                    None
+                } else if kind == AgentKind::Claude {
+                    // claude-agent-acp silently ignores a bare `systemPrompt`
+                    // field — it only reads `_meta.systemPrompt.append`.
+                    // Sending the wrong shape doesn't error, it just means
+                    // the agent never sees the room's shared context (or the
+                    // @mention handoff instructions) at all. See
+                    // `SystemPromptTransport` for the full story.
+                    Some(SystemPromptTransport::ClaudeMeta(&system_prompt))
+                } else {
+                    Some(SystemPromptTransport::Field(&system_prompt))
+                };
+                client.session_new(cwd, transport).await?.session_id
+            }
         };
-        let session = client.session_new(cwd, transport).await?;
+
         if let Some(model_id) = model {
             // Best-effort: some adapters/models reject session/set_model for
             // certain sessions. Don't abort the spawn over it.
-            let _ = client.session_set_model(&session.session_id, model_id).await;
+            let _ = client.session_set_model(&acp_session_id, model_id).await;
         }
 
         agents.insert(
             key,
             RunningAgent {
                 client,
-                session_id: session.session_id,
+                session_id: acp_session_id.clone(),
                 last_active: Instant::now(),
                 cancel_requested: Arc::new(AtomicBool::new(false)),
+                is_prompting: Arc::new(AtomicBool::new(false)),
             },
         );
-        Ok(())
+        Ok(acp_session_id)
     }
 
     /// Run a prompt turn against an already-running agent, streaming updates.
@@ -157,9 +194,13 @@ impl ProcessManager {
             .ok_or_else(|| super::client::AcpError::Protocol("agent not running".into()))?;
         agent.last_active = Instant::now();
         agent.cancel_requested.store(false, Ordering::Relaxed);
+        agent.is_prompting.store(true, Ordering::Relaxed);
         let acp_session_id = agent.session_id.clone();
         let cancel = Arc::clone(&agent.cancel_requested);
-        agent.client.session_prompt_with_permission(&acp_session_id, blocks, on_update, Some(cancel), permission_handler).await
+        let prompting = Arc::clone(&agent.is_prompting);
+        let result = agent.client.session_prompt_with_permission(&acp_session_id, blocks, on_update, Some(cancel), permission_handler).await;
+        prompting.store(false, Ordering::Relaxed);
+        result
     }
 
     pub async fn cancel_for(&self, session_id: Uuid) {
@@ -173,6 +214,13 @@ impl ProcessManager {
 
     pub async fn is_active(&self, session_id: Uuid, kind: AgentKind) -> bool {
         self.agents.lock().await.contains_key(&(session_id, kind))
+    }
+
+    pub async fn is_busy(&self, session_id: Uuid, kind: AgentKind) -> bool {
+        self.agents.lock().await
+            .get(&(session_id, kind))
+            .map(|agent| agent.is_prompting.load(Ordering::Relaxed))
+            .unwrap_or(false)
     }
 
     /// Tear down and remove any agent processes for `session_id` (all agent

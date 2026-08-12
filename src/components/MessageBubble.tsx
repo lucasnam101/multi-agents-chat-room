@@ -1,3 +1,4 @@
+import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -16,6 +17,7 @@ export function useAuthorLabel(): Record<Message["author_kind"], string> {
     user: t("author.you"),
     claude: "Claude",
     codex: "Codex",
+    grok: "Grok",
     system: t("author.system"),
     orchestrator: t("author.orchestrator"),
   };
@@ -28,6 +30,7 @@ const AUTHOR_ACCENT: Record<Message["author_kind"], string> = {
   user: "bg-indigo-500",
   claude: "bg-amber-500",
   codex: "bg-emerald-500",
+  grok: "bg-sky-500",
   orchestrator: "bg-violet-500",
   system: "bg-neutral-400",
 };
@@ -36,6 +39,7 @@ const AUTHOR_BUBBLE: Record<Message["author_kind"], string> = {
   user: "bg-indigo-600 text-white",
   claude: "bg-amber-50 text-neutral-900 dark:bg-amber-500/10 dark:text-neutral-100",
   codex: "bg-emerald-50 text-neutral-900 dark:bg-emerald-500/10 dark:text-neutral-100",
+  grok: "bg-sky-50 text-neutral-900 dark:bg-sky-500/10 dark:text-neutral-100",
   orchestrator: "bg-violet-50 text-neutral-900 dark:bg-violet-500/10 dark:text-neutral-100",
   system: "bg-neutral-100 text-neutral-500 dark:bg-neutral-800/60 dark:text-neutral-400",
 };
@@ -55,13 +59,21 @@ interface Props {
   message: Message;
   toolEvents?: AgentUpdate[];
   phase?: TurnPhase;
-  onOpenThread?: () => void;
+  onOpenThread?: (messageId: number) => void;
   onOpenLink?: (url: string) => void;
-  onQuickReply?: (authorKind: "claude" | "codex" | "orchestrator") => void;
+  onQuickReply?: (authorKind: "claude" | "codex" | "grok" | "orchestrator") => void;
   fontSizeClass?: string;
 }
 
-export function MessageBubble({
+// Memoized: parsing markdown (react-markdown + remark-gfm/remark-breaks) is
+// not cheap, and without this every keystroke in the composer (a state
+// update in the parent ChatView) would re-render — and re-parse — every
+// message bubble in the whole conversation, not just the one being typed
+// into. Relies on the parent passing stable callback identities (see
+// `onOpenThread`/`onOpenLink` usage in ChatView) — an inline arrow function
+// recreated on every render defeats memoization just as surely as skipping
+// it entirely.
+export const MessageBubble = memo(function MessageBubble({
   message,
   toolEvents,
   phase,
@@ -187,14 +199,15 @@ export function MessageBubble({
         {toolEvents && toolEvents.length > 0 && (
           <button
             className="mt-1.5 inline-flex w-fit items-center gap-1.5 rounded-full border border-black/10 bg-black/5 px-2.5 py-1 text-[11px] font-medium opacity-80 transition hover:opacity-100 dark:border-white/10 dark:bg-white/5"
-            onClick={onOpenThread}
+            onClick={() => onOpenThread?.(message.id)}
           >
             <IconWrench className="h-3 w-3" />
             {t("tool.viewDetails", { n: String(toolEvents.length) })}
           </button>
         )}
+        {(phase !== undefined || (!isUser && !isSystem && (message.author_kind === "claude" || message.author_kind === "codex" || message.author_kind === "grok" || message.author_kind === "orchestrator"))) && <div className="mt-2 flex w-full items-center justify-end gap-2">
         {phase !== undefined && (
-          <span className="mt-2 inline-flex self-end items-center gap-1.5 rounded-full bg-amber-500/15 px-2 py-1 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-2 py-1 text-[10px] font-medium text-amber-700 dark:text-amber-300">
             <span className="relative flex h-1.5 w-1.5">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500 opacity-70" />
               <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-amber-500" />
@@ -203,17 +216,18 @@ export function MessageBubble({
             <TypingIndicator />
           </span>
         )}
-        {!isUser && !isSystem && (message.author_kind === "claude" || message.author_kind === "codex" || message.author_kind === "orchestrator") && (
+        {!isUser && !isSystem && (message.author_kind === "claude" || message.author_kind === "codex" || message.author_kind === "grok" || message.author_kind === "orchestrator") && (
           <button
-            onClick={() => onQuickReply?.(message.author_kind as "claude" | "codex" | "orchestrator")}
-            className="mt-1 inline-flex w-fit self-end items-center gap-1 rounded-md px-1.5 py-1 text-[11px] opacity-60 transition hover:bg-black/10 hover:opacity-100 dark:hover:bg-white/10"
+            onClick={() => onQuickReply?.(message.author_kind as "claude" | "codex" | "grok" | "orchestrator")}
+            className="inline-flex w-fit items-center gap-1 rounded-md px-1.5 py-1 text-[11px] opacity-60 transition hover:bg-black/10 hover:opacity-100 dark:hover:bg-white/10"
             title={`Reply to ${AUTHOR_LABEL[message.author_kind]}`}
             aria-label={`Reply to ${AUTHOR_LABEL[message.author_kind]}`}
           >
             <IconReply className="h-3 w-3" /> Reply
           </button>
         )}
+        </div>}
       </div>
     </div>
   );
-}
+});

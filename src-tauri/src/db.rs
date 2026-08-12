@@ -25,7 +25,7 @@ pub async fn init_pool() -> Result<PgPool, sqlx::Error> {
 pub async fn recover_orphaned_placeholders(pool: &PgPool) -> Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE messages SET content = $1
-         WHERE message_type = 'chat' AND author_kind IN ('claude', 'codex', 'orchestrator') AND content = ''",
+         WHERE message_type = 'chat' AND author_kind IN ('claude', 'codex', 'grok', 'orchestrator') AND content = ''",
     )
     .bind("⚠️ Lượt trả lời này bị ngắt vì ứng dụng đã tắt — @mention lại agent để tiếp tục, ngữ cảnh trước đó vẫn được giữ.")
     .execute(pool)

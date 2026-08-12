@@ -37,7 +37,7 @@ export function ModelSelect({
   value,
   onChange,
 }: {
-  agentKind: "claude" | "codex";
+  agentKind: "claude" | "codex" | "grok";
   value: string | null;
   onChange: (model: string | null) => void;
 }) {
@@ -136,11 +136,13 @@ export function SettingsPanel({ onClose, onFontSizeChange }: SettingsPanelProps)
   const [orchestratorKind, setOrchestratorKind] = useState<"claude" | "codex">("codex");
   const [claudeModel, setClaudeModel] = useState<string | null>(null);
   const [codexModel, setCodexModel] = useState<string | null>(null);
+  const [grokModel, setGrokModel] = useState<string | null>(null);
   const [orchestratorModel, setOrchestratorModel] = useState<string | null>(null);
   const [budget, setBudget] = useState(300_000);
   const [fontSize, setFontSize] = useState<"sm" | "base" | "lg">("base");
   const [claudeOk, setClaudeOk] = useState<boolean | null>(null);
   const [codexOk, setCodexOk] = useState<boolean | null>(null);
+  const [grokOk, setGrokOk] = useState<boolean | null>(null);
 
   // Cheap settings load immediately; the model dropdowns each spawn an ACP
   // process just to list models, so those only fetch once the "Model" tab
@@ -151,6 +153,7 @@ export function SettingsPanel({ onClose, onFontSizeChange }: SettingsPanelProps)
     api.getModelSettings().then((s) => {
       setClaudeModel(s.claude_model);
       setCodexModel(s.codex_model);
+      setGrokModel(s.grok_model);
       setOrchestratorModel(s.orchestrator_model);
     });
     api.getContextBudget().then(setBudget);
@@ -164,6 +167,7 @@ export function SettingsPanel({ onClose, onFontSizeChange }: SettingsPanelProps)
     if (tab !== "models") return;
     api.checkCliStatus("claude").then(setClaudeOk);
     api.checkCliStatus("codex").then(setCodexOk);
+    api.checkCliStatus("grok").then(setGrokOk);
   }, [tab]);
 
   async function changeOrchestrator(kind: "claude" | "codex") {
@@ -171,9 +175,10 @@ export function SettingsPanel({ onClose, onFontSizeChange }: SettingsPanelProps)
     await api.setOrchestratorKind(kind);
   }
 
-  async function changeModel(scope: "claude" | "codex" | "orchestrator", model: string | null) {
+  async function changeModel(scope: "claude" | "codex" | "grok" | "orchestrator", model: string | null) {
     if (scope === "claude") setClaudeModel(model);
     else if (scope === "codex") setCodexModel(model);
+    else if (scope === "grok") setGrokModel(model);
     else setOrchestratorModel(model);
     await api.setModelSetting(scope, model);
   }
@@ -277,19 +282,26 @@ export function SettingsPanel({ onClose, onFontSizeChange }: SettingsPanelProps)
               <span className="text-sm text-neutral-700 dark:text-neutral-300">Claude CLI</span>
               <StatusPill ok={claudeOk} />
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-neutral-700 dark:text-neutral-300">Codex CLI</span>
-              <StatusPill ok={codexOk} />
-            </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-neutral-700 dark:text-neutral-300">Codex CLI</span>
+                <StatusPill ok={codexOk} />
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-neutral-700 dark:text-neutral-300">Grok CLI</span>
+                <StatusPill ok={grokOk} />
+              </div>
           </Section>
 
           <Section title={t("settings.section.defaultModels")}>
             <Field label="Claude">
               <ModelSelect agentKind="claude" value={claudeModel} onChange={(m) => changeModel("claude", m)} />
             </Field>
-            <Field label="Codex">
-              <ModelSelect agentKind="codex" value={codexModel} onChange={(m) => changeModel("codex", m)} />
-            </Field>
+              <Field label="Codex">
+                <ModelSelect agentKind="codex" value={codexModel} onChange={(m) => changeModel("codex", m)} />
+              </Field>
+              <Field label="Grok">
+                <ModelSelect agentKind="grok" value={grokModel} onChange={(m) => changeModel("grok", m)} />
+              </Field>
             <p className="text-xs text-neutral-400">{t("settings.roomOverrideNote")}</p>
           </Section>
 

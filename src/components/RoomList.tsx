@@ -22,7 +22,7 @@ function AgentBadge({ status }: { status: RoomAgentStatus }) {
       <span
         className={`h-1.5 w-1.5 rounded-full ${status.is_active ? "bg-emerald-500" : "bg-neutral-400 dark:bg-neutral-600"}`}
       />
-      {status.agent_kind === "claude" ? "Claude" : "Codex"}
+      {status.agent_kind === "claude" ? "Claude" : status.agent_kind === "codex" ? "Codex" : "Grok"}
     </span>
   );
 }
